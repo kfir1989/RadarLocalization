@@ -143,7 +143,8 @@ class NuscenesVideo:
         self.prior_y_lim_max = -1e6
         
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime"]
-        self.dir_name = "nuscenes_images_{}".format(scene)
+        self.dir_name = "images/nuscenes_images_{}".format(scene)
+        os.system("mkdir -p " + self.dir_name)
         self.history = history
         self.counter = 0
         self.scene = scene
@@ -198,17 +199,18 @@ class NuscenesVideo:
             self.ax[0,2].set_xlim([self.prior_x_lim_min,self.prior_x_lim_max])
             self.ax[0,2].set_ylim([self.prior_y_lim_min,self.prior_y_lim_max])
             
-        #x(t)
-        self.ax[1,0].set_title("x(t)", fontsize=20)
-        self.ax[1,0].scatter(np.ones(pc.shape[0])*self.counter, pc[:,0],color="blue",s=2)
-        self.ax[1,0].set_xlim([0,200])
-        self.ax[1,0].set_ylim([self.x_lim_min,self.x_lim_max])
-        
-        #y(t)
-        self.ax[1,1].set_title("y(t)", fontsize=20)
-        self.ax[1,1].scatter(np.ones(pc.shape[0])*self.counter, pc[:,1],color="blue",s=2)
-        self.ax[1,1].set_xlim([0,200])
-        self.ax[1,1].set_ylim([self.y_lim_min,self.y_lim_max])
+        if 0:
+            #x(t)
+            self.ax[1,0].set_title("x(t)", fontsize=20)
+            self.ax[1,0].scatter(np.ones(pc.shape[0])*self.counter, pc[:,0],color="blue",s=2)
+            self.ax[1,0].set_xlim([0,200])
+            self.ax[1,0].set_ylim([self.x_lim_min,self.x_lim_max])
+
+            #y(t)
+            self.ax[1,1].set_title("y(t)", fontsize=20)
+            self.ax[1,1].scatter(np.ones(pc.shape[0])*self.counter, pc[:,1],color="blue",s=2)
+            self.ax[1,1].set_xlim([0,200])
+            self.ax[1,1].set_ylim([self.y_lim_min,self.y_lim_max])
         
         #map
         if self.counter == 0:
@@ -409,7 +411,7 @@ class NuscenesVideoDebug:
         video.release()
         
 class PFVideo:
-    def __init__(self, scene=5, history=False):
+    def __init__(self, scene=5, history=False, N=410):
         self.fig, self.ax = plt.subplots(2,2,figsize=(30,14))
         self.x_lim_min = 1e6
         self.x_lim_max = 1e-6
@@ -422,7 +424,8 @@ class PFVideo:
         self.prior_y_lim_max = -1e6
         
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime"]
-        self.dir_name = "pf_images_{}".format(scene)
+        self.dir_name = "images/pf_images_{}".format(scene)
+        os.system("mkdir -p " + self.dir_name)
         self.history = history
         self.counter = 0
         self.scene = scene
@@ -433,13 +436,13 @@ class PFVideo:
         self.cross_track_pos = np.copy(nanArray)
         self.graph_cross_track, = self.ax[0,0].plot([], [], color="blue",linewidth=3)
         self.ax[0,0].set_title("Cross-Track Error", fontsize=20)
-        self.ax[0,0].set_xlim([0,225])
+        self.ax[0,0].set_xlim([0,N])
         self.ax[0,0].set_ylim([0,8])
         
         self.along_track_pos = np.copy(nanArray)
         self.graph_along_track, = self.ax[0,1].plot([], [], color="blue",linewidth=3)
         self.ax[0,1].set_title("Along-Track Error", fontsize=20)
-        self.ax[0,1].set_xlim([0,225])
+        self.ax[0,1].set_xlim([0,N])
         self.ax[0,1].set_ylim([0,8])
         
     def calcTrackError(self, gt_pos, gt_heading, pf_pos):

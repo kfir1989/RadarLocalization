@@ -15,7 +15,7 @@ class PF:
         self.sigma_theta = 0.01
         #IMU measurements estimated errors
         self.sigma_rot1 = 0.00000001
-        self.sigma_trans = 0.2
+        self.sigma_trans = 0.05
         self.sigma_rot2 = 0.01
         self.current_odom_xy_theta = None
         
@@ -144,6 +144,14 @@ class PF:
             particle["y"] += dt_noisy * np.sin(particle["theta"] + dr1_noisy)
             particle["theta"] += (delta[2] - dr1_noisy)
             particle["theta"] = (particle["theta"] + np.pi) % (2 * np.pi) - np.pi
+            if 1:
+                R = np.array([[np.cos(particle["theta"]), -np.sin(particle["theta"])], [np.sin(particle["theta"]), np.cos(particle["theta"])]])
+                xy = np.array([particle["x"], particle["y"]])
+                xy_rotated = np.dot(R, xy)
+                xy_rotated_plus_errs = xy_rotated + np.array([np.random.normal(0, 0.1), np.random.normal(0, 0.2)])
+                xy_rotated_back = np.dot(np.linalg.inv(R), xy_rotated_plus_errs)
+                particle["x"] = xy_rotated_back[0]
+                particle["y"] = xy_rotated_back[1]
 
     def eval_sensor_model(self, worldRef, extTracks, roadMap):
         #rate each particle

@@ -1,6 +1,7 @@
 from utils import *
 from tools import *
 import os
+import os.path
 import numpy as np
 import pandas as pd
 import json
@@ -84,13 +85,13 @@ class DynamicSimulatedDataset(Dataset):
 		
 
 class NuscenesDataset(Dataset):
-    def __init__(self, **kwargs):
+    def __init__(self, nusc, **kwargs):
+        self.nusc = nusc
+        scene_id = kwargs.pop('scene_id', 5)
         directory = kwargs.pop('directory')
-        scene_id = kwargs.pop('scene', 5)
         scene_name = self.__getSceneName(scene_id)
-        map_name = self.__getMapName(scene_id)
-        print(r"scene_id={} scene_name={} map_name={}",scene_id, scene_name, map_name)
-        self.nusc = NuScenes(version="v1.0-mini", dataroot=directory, verbose=False)
+        map_name = self.__getMapName(scene_name)
+        print(r"scene_id={} scene_name={} map_name={}".format(scene_id, scene_name, map_name))
         self.nusc_map = NuScenesMap(dataroot=directory, map_name=map_name)
         nusc_can = NuScenesCanBus(dataroot=directory)
         self.imu = nusc_can.get_messages(self.__getSceneName(scene_id), 'ms_imu')
@@ -98,18 +99,18 @@ class NuscenesDataset(Dataset):
         #ego_poses = nusc_map_bos.render_egoposes_on_fancy_map(nusc, scene_tokens=[nusc.scene[5]['token']], verbose=False)
         self.rpath = os.path.join(directory, 'sweeps', 'RADAR_FRONT')
         self.cpath = os.path.join(directory, 'sweeps', 'CAM_FRONT')
-        self.ego = self.__extractEgo(os.path.join(directory, 'v1.0-mini', 'ego_pose.json'))
-        self.radar_files = os.listdir(self.rpath)
-        self.camera_files = os.listdir(self.cpath)
-        self.radar_ts = self.__extractTimestamps(self.radar_files)
-        self.camera_ts = self.__extractTimestamps(self.camera_files)
+        self.ego = self.__extractEgo(os.path.join(directory, 'v1.0-trainval', 'ego_pose.json'))
+        self.radar_files = sorted(os.listdir(self.rpath))
+        self.camera_files = sorted(os.listdir(self.cpath))
+        self.radar_ts = self.__extractTimestamps("radar", self.radar_files)
+        self.camera_ts = self.__extractTimestamps("camera", self.camera_files)
         
         my_scene = self.nusc.scene[scene_id]
         first_sample_token = my_scene['first_sample_token']
         my_sample = self.nusc.get('sample', first_sample_token)
         radar_front_data = self.nusc.get('sample_data', my_sample['data']['RADAR_FRONT'])
         self.cs_record = self.nusc.get('calibrated_sensor', radar_front_data['calibrated_sensor_token'])
-        self.first_idx = self.__getFirstIdxOffset(scene_id)
+        self.first_idx = self.__getFirstIdxOffset(scene_name)
         self.odometry = {'r1':0,'t':0,'r2':0}
         self.__getFirstPosition(self.first_idx)
         
@@ -186,16 +187,24 @@ class NuscenesDataset(Dataset):
         ego.reset_index(level=0, inplace=True)
         return ego
         
-    def __extractTimestamps(self, filenames):
-        ts = []
-        for filename in filenames:
-            ts.append(np.int64(filename.split('_')[-1].split('.')[0]))
+    def __extractTimestamps(self, sensor_name, filenames):
+        db_file = f"/home/kfir/workspace/RadarLocalization/database/{sensor_name}_timestamps.csv"
+        if os.path.isfile(db_file):
+            df = pd.read_csv(db_file)
+        else:
+            ts = []
+            for filename in filenames:
+                ts.append(np.int64(filename.split('_')[-1].split('.')[0]))
+
+            df = pd.DataFrame({'timestamp':ts})
+            print("mkdir", os.path.dirname(db_file))
+            os.makedirs(os.path.dirname(db_file), exist_ok=True)
+            df.to_csv(db_file)
             
-        df = pd.DataFrame({'timestamp':ts})
         return df
     
     def getEgoInfo(self, i, GT=True):
-        ts = self.radar_ts.iloc[i].values[0] #take timestamp from radar
+        ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar
         if GT:
             eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
             trns = self.ego.iloc[eidx]["translation"]
@@ -230,7 +239,7 @@ class NuscenesDataset(Dataset):
         return self.odometry
     
     def __getFirstPosition(self, firstIdx):
-        ts = self.radar_ts.iloc[firstIdx].values[0] #take timestamp from radar
+        ts = self.radar_ts.iloc[firstIdx]["timestamp"] #take timestamp from radar
         eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
         self.first_gt_trns = self.ego.iloc[eidx]["translation"]
         self.first_gt_rot = Quaternion(self.ego.iloc[eidx]["rotation"])
@@ -248,7 +257,7 @@ class NuscenesDataset(Dataset):
         self.odometry['trns'] = self.first_gt_trns
         
     def __getPrior(self, i):
-        ts = self.radar_ts.iloc[i].values[0] #take timestamp from radar
+        ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar
         eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
         trns = self.ego.iloc[eidx]["translation"]
         lanes = []
@@ -277,23 +286,38 @@ class NuscenesDataset(Dataset):
         return pc
         
     def __getSyncedImage(self, i):
-        ts = self.radar_ts.iloc[i].values[0] #take timestamp from radar
+        ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar
         cidx = (self.camera_ts['timestamp']-ts).abs().argsort()[0]
         img = mpimg.imread(os.path.join(self.cpath, self.camera_files[cidx]))
         
         return img
     
     def __getSceneName(self, scene_id):
-        scene_names = ["scene-0103", "scene-0061", "scene-0553", "scene-0655", "scene-0757", "scene-0796", "scene-0916", "scene-1077" "scene-1094","scene-1100"]
-        return scene_names[scene_id]
+        recs = [(self.nusc.get('sample', record['first_sample_token'])['timestamp'], record) for record in
+                self.nusc.scene]
+        
+        return recs[scene_id][1]["name"]
     
-    def __getMapName(self, scene_id):
-        map_names = ["boston-seaport", "boston-seaport", "boston-seaport", "boston-seaport", "boston-seaport", "singapore-queenstown", "singapore-queenstown", "boston-seaport" "boston-seaport","boston-seaport"]
-        #map_name = kwargs.pop('map_name', 'singapore-onenorth')
-        #map_name = kwargs.pop('map_name', 'singapore-hollandvillage')
-        #map_name = kwargs.pop('map_name', 'boston-seaport')
-        return map_names[scene_id]
+    def __getMapName(self, scene_name):
+        recs = [(self.nusc.get('sample', record['first_sample_token'])['timestamp'], record) for record in
+                self.nusc.scene]
+
+        for start_time, record in sorted(recs):
+            if record["name"] == scene_name:
+                location = self.nusc.get('log', record['log_token'])['location']
+                return location
+            
+        raise ValueError(f"Map doesn't exist for scene_name={scene_name}")
+        
     
-    def __getFirstIdxOffset(self, scene_id):
-        idx_offset = [0, 227, 455, 687, "unknown", 1125, 1344]
-        return idx_offset[scene_id]
+    def __getFirstIdxOffset(self, scene_name):
+        recs = [(self.nusc.get('sample', record['first_sample_token'])['timestamp'], record) for record in
+                self.nusc.scene]
+        
+        for start_time, record in sorted(recs):
+            if record["name"] == scene_name:
+                start_time = self.nusc.get('sample', record['first_sample_token'])['timestamp']
+                ridx = (self.radar_ts['timestamp']-start_time).abs().argsort()[0]
+                return ridx
+            
+        raise ValueError(f"First idx cannot be found for scene_name={scene_name}")

@@ -98,7 +98,8 @@ class Tracker:
             for idx_track, pnt_track in enumerate(self.pnt_object_list):
                 x = pnt_track.getStateVector()
                 x_pred = pnt_track.getPredictedStateVector()
-                innov_cov = pnt_track.getInnovationCovarianceMatrix()
+                #innov_cov = pnt_track.getInnovationCovarianceMatrix()
+                innov_cov = pnt_track.getCovarianceMatrix()
                 Gp[idx_z,idx_track] = self.pnt_data_associator.calcLikelihood(z, x_pred, innov_cov)
         
         return Ge, Gp

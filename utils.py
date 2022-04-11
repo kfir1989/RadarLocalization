@@ -12,7 +12,11 @@ class PointObjectDataAssociator():
         self.dim = 2 #rank
         
     def distance(self, x, u, P):
-        return np.dot(np.dot((x-u).T,np.linalg.inv(P)),(x-u))
+        try:
+            return np.dot(np.dot((x-u).T,np.linalg.inv(P)),(x-u))
+        except:
+            print("OOps! x = ", x, "u = ", u, " P = ", P)
+            raise ValueError("Oh NO")
         
     def gating(self, z, z_prior, innov_cov):
         return self.distance(z,z_prior,innov_cov) <= self.delta
