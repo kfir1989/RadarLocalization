@@ -94,8 +94,11 @@ class NuscenesDataset(Dataset):
         print(r"scene_id={} scene_name={} map_name={}".format(scene_id, scene_name, map_name))
         self.nusc_map = NuScenesMap(dataroot=directory, map_name=map_name)
         nusc_can = NuScenesCanBus(dataroot=directory)
-        self.imu = nusc_can.get_messages(self.__getSceneName(scene_id), 'ms_imu')
-        self.veh_speed = nusc_can.get_messages(scene_name, 'zoe_veh_info')
+        self.imu = []
+        self.veh_speed = []
+        for ii in range(scene_id, scene_id + 8):
+            self.imu = self.imu + nusc_can.get_messages(self.__getSceneName(ii), 'ms_imu')
+            self.veh_speed = self.veh_speed + nusc_can.get_messages(self.__getSceneName(ii), 'zoe_veh_info')
         #ego_poses = nusc_map_bos.render_egoposes_on_fancy_map(nusc, scene_tokens=[nusc.scene[5]['token']], verbose=False)
         self.rpath = os.path.join(directory, 'sweeps', 'RADAR_FRONT')
         self.cpath = os.path.join(directory, 'sweeps', 'CAM_FRONT')
@@ -113,6 +116,7 @@ class NuscenesDataset(Dataset):
         self.first_idx = self.__getFirstIdxOffset(scene_name)
         self.odometry = {'r1':0,'t':0,'r2':0}
         self.__getFirstPosition(self.first_idx)
+        self.ego_path, self.ego_trns = self.__extractEgoPath(800)
         
     def getData(self, t):
         t += self.first_idx
@@ -121,7 +125,8 @@ class NuscenesDataset(Dataset):
         z = self.__getRadarSweep(t)[:,0:2]
         #z = z[:, [1, 0]]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
-        trns,rot = self.getEgoInfo(t)
+        trns,rot = self.getEgoInfo(t, GT=True)
+        trns_imu,_ = self.getEgoInfo(t, GT=False)
         zw = self.__getTransformedRadarData(t)[:, 0:2]
         #zw = zw[:, [1, 0]]
         R = rot.rotation_matrix[0:2,0:2] ##not great!
@@ -130,7 +135,7 @@ class NuscenesDataset(Dataset):
         img = self.__getSyncedImage(t)
         heading = 90 + np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
         
-        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns, "rot": R, "heading": heading, "odometry": self.odometry}
+        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns, "rot": R, "heading": heading, "pos_imu" : trns_imu, "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
 
         return zw, covw, prior, video_data, self.nusc_map
     
@@ -186,6 +191,24 @@ class NuscenesDataset(Dataset):
 
         ego.reset_index(level=0, inplace=True)
         return ego
+    
+    def __extractEgoPath(self, N):
+        radar_first_ts = self.radar_ts.iloc[self.first_idx]["timestamp"]
+        radar_last_ts = self.radar_ts.iloc[self.first_idx+N]["timestamp"]
+        ego_first_idx = (self.ego['timestamp']-radar_first_ts).abs().argsort()[0]
+        ego_last_idx = (self.ego['timestamp']-radar_last_ts).abs().argsort()[0]
+        
+        relevant_ego_path = self.ego.iloc[ego_first_idx:ego_last_idx+1][["translation", "timestamp"]]
+        ego_path = []
+        for idx in range(0,N):
+            closest_ego_idx = (relevant_ego_path['timestamp']-self.radar_ts.iloc[self.first_idx + idx]["timestamp"]).abs().argsort().iloc[0]
+            ego_path.append(relevant_ego_path.iloc[closest_ego_idx]['translation'])
+                     
+        ego_trns = [np.linalg.norm(np.array(x) - np.array(ego_path[i - 1])) for i, x in enumerate(ego_path)][1:]
+        ego_trns = np.cumsum(ego_trns)
+        ego_trns = np.insert(ego_trns, 0, 0)
+        
+        return np.array(ego_path), ego_trns
         
     def __extractTimestamps(self, sensor_name, filenames):
         db_file = f"/home/kfir/workspace/RadarLocalization/database/{sensor_name}_timestamps.csv"
@@ -213,6 +236,7 @@ class NuscenesDataset(Dataset):
             #based on IMU and odometry
             rot_imu = np.array([(m['utime'], m['q']) for m in self.imu])
             ridx = np.argsort(np.abs(rot_imu[:,0]-ts))[0]
+            print("ridx", ridx, "rot_imu.shape", rot_imu.shape)
             rot = Quaternion(self.imu[ridx]['q'])
             rot *= self.first_imu_rot.inverse #substract IMU intial offset
             rot *= self.first_gt_rot # add initial GT offset 
@@ -321,3 +345,6 @@ class NuscenesDataset(Dataset):
                 return ridx
             
         raise ValueError(f"First idx cannot be found for scene_name={scene_name}")
+        
+    def getEgoPath(self):
+        return self.ego_path

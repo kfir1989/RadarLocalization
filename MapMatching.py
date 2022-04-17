@@ -3,6 +3,7 @@ import math
 import copy
 import time
 import scipy.stats
+from scipy.spatial.distance import cdist
 
 from utils import ExtObjectDataAssociator
 
@@ -14,7 +15,7 @@ class PF:
         self.sigma_r = 0.2
         self.sigma_theta = 0.01
         #IMU measurements estimated errors
-        self.sigma_rot1 = 0.00000001
+        self.sigma_rot1 = 0.0001
         self.sigma_trans = 0.05
         self.sigma_rot2 = 0.01
         self.current_odom_xy_theta = None
@@ -89,6 +90,11 @@ class PF:
         
         #print(sx, sy, y_match, P_match, state)
         return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
+    
+    def getClosestPointToDrivableArea(self, pos, drivableArea):
+        drivable_area_indices = np.argwhere(drivableArea > 0)
+        dists = cdist(pos, drivable_area_indices)
+        return drivable_area_indices[np.argmin(dists)]
 
     def initialize_particles(self, num_particles, worldRef):
         particles = []
@@ -120,7 +126,7 @@ class PF:
 
         self.particles = particles
     
-    def sample_motion_model(self, new_odom_xy_theta):
+    def sample_motion_model(self, new_odom_xy_theta, drivableArea):
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta is not None:
             old_odom_xy_theta = self.current_odom_xy_theta
@@ -145,13 +151,25 @@ class PF:
             particle["theta"] += (delta[2] - dr1_noisy)
             particle["theta"] = (particle["theta"] + np.pi) % (2 * np.pi) - np.pi
             if 1:
-                R = np.array([[np.cos(particle["theta"]), -np.sin(particle["theta"])], [np.sin(particle["theta"]), np.cos(particle["theta"])]])
+                R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
                 xy = np.array([particle["x"], particle["y"]])
                 xy_rotated = np.dot(R, xy)
-                xy_rotated_plus_errs = xy_rotated + np.array([np.random.normal(0, 0.1), np.random.normal(0, 0.2)])
+                sigma_along_track = 0.1 if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else 0.05
+                xy_rotated_plus_errs = xy_rotated + np.array([np.random.normal(0, sigma_along_track), np.random.normal(0, 0.05)])
                 xy_rotated_back = np.dot(np.linalg.inv(R), xy_rotated_plus_errs)
                 particle["x"] = xy_rotated_back[0]
                 particle["y"] = xy_rotated_back[1]
+                if 1:
+                    x_on_map = round(particle["x"] - new_odom_xy_theta[0] + drivableArea.shape[0] / 2)
+                    y_on_map = round(particle["y"] - new_odom_xy_theta[1] + drivableArea.shape[1] / 2)
+                    closest_point = self.getClosestPointToDrivableArea([(y_on_map, x_on_map)], drivableArea)
+                    dx = closest_point[1] - x_on_map
+                    dy = closest_point[0] - y_on_map
+                    #print("x_on_map", x_on_map, "y_on_map", y_on_map, "closest_point", closest_point, "dx", dx, "dy", dy, "particle[\"x\"]", particle["x"], "particle[\"y\"]", particle["y"])
+                    #print("new_odom_xy_theta", new_odom_xy_theta, "particle[\"x\"]", particle["x"], "particle[\"y\"]", particle["y"], x_on_map, y_on_map, closest_point, dx, dy)
+                    particle["x"] += dx
+                    particle["y"] += dy
+                    #print("after update: ", "particle[\"x\"]", particle["x"], "particle[\"y\"]", particle["y"])
 
     def eval_sensor_model(self, worldRef, extTracks, roadMap):
         #rate each particle
@@ -218,14 +236,26 @@ class PF:
                 
         return best_particle
     
-    def getMean(self):
+    def getMean(self, particles):
         mean_particle = {'x': 0, 'y': 0, 'theta': 0}
-        mean_particle['x'] = sum([p['x'] for p in self.particles]) / len(self.particles)
-        mean_particle['y'] = sum([p['y'] for p in self.particles]) / len(self.particles)
-        mean_particle['theta'] = sum([p['theta'] for p in self.particles]) / len(self.particles)
+        mean_particle['x'] = sum([p['x'] for p in particles]) / len(particles)
+        mean_particle['y'] = sum([p['y'] for p in particles]) / len(particles)
+        mean_particle['theta'] = sum([p['theta'] for p in particles]) / len(particles)
                 
         return mean_particle
-            
+    
+    def calcDist(self, p1, p2):
+        dist = np.linalg.norm(np.array([p1['x'], p1['y']]) - np.array([p2['x'], p2['y']]))
+        
+        return dist
+    
+    def getSigmaClipped(self, nSigma=1.05):
+        E = self.getMean(self.particles)
+        var_dist = sum([self.calcDist(p, E) for p in self.particles]) / len(self.particles)
+        particles_within_sigma = [p for p in self.particles if (self.calcDist(p, E) <= var_dist * nSigma)]
+        E = self.getMean(particles_within_sigma)
+        
+        return E      
 
 import cv2
 from nuscenes.map_expansion.map_api import NuScenesMap
@@ -235,36 +265,52 @@ class MapMatching:
         self.N = N
         self.pf = PF(N=N)
         
-    def getRoadBorders(self, nuscMap, worldRef):
+    def getRoadBorders(self, nuscMap, worldRef, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.7):
         patch_angle = 0
         patch_size = 200
         patch_box = (worldRef[0], worldRef[1], patch_size, patch_size)
-        layer_names = ['walkway']
         canvas_size = (patch_size, patch_size)
         map_mask = nuscMap.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
         mask = map_mask[0]
-        mask_blur = cv2.GaussianBlur(mask, (3,3), 0)
-        edges = cv2.Canny(image=mask_blur, threshold1=0.5, threshold2=0.7) # Canny Edge Detection
+        mask_blur = cv2.GaussianBlur(mask, blur_area, 0)
+        edges = cv2.Canny(image=mask_blur, threshold1=threshold1, threshold2=threshold2) # Canny Edge Detection
         
         return edges
+    
+    def getMapReference(self, nuscMap, worldRef):
+        edges1 = self.getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.9)
+        edges2 = self.getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, layer_names=['drivable_area'],blur_area=(3,3),threshold1=0.5, threshold2=0.9)
+        edges = edges1 & edges2
+        
+        return edges2
+    
+    def getDrivableArea(self, nuscMap, worldRef, layer_names = ['drivable_area'], patch_size=50):
+        patch_angle = 0
+        patch_box = (worldRef[0], worldRef[1], patch_size, patch_size)
+        canvas_size = (patch_size, patch_size)
+        map_mask = nuscMap.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
+        mask = map_mask[0]
+        
+        return mask
 
     def run(self, extTracks, nuscMap, origWorldRef, worldRef, R, heading, odometry):
-        #world_ref = np.array([posInput[0],posInput[1],np.sign(R[1,0])*np.arccos(R[0,0])])
+        orig_world_ref = np.array([origWorldRef[0],origWorldRef[1], np.deg2rad(heading-90)])
         world_ref = np.array([worldRef[0],worldRef[1], np.deg2rad(heading-90)])
         if self.pf.current_odom_xy_theta is None:
             self.pf.initialize_particles(self.N, world_ref)
-        self.pf.sample_motion_model(world_ref)
-        road_map = self.getRoadBorders(nuscMap, origWorldRef)
+        drivable_area = self.getDrivableArea(nuscMap, orig_world_ref)
+        self.pf.sample_motion_model(world_ref, drivable_area)
+        road_map = self.getMapReference(nuscMap, orig_world_ref)
         self.pf.eval_sensor_model(world_ref, extTracks, road_map)
         self.best_particle = self.pf.getBestParticle()
         self.pf.resample_particles()
         
     def getResults(self):
-        mean_particle = self.pf.getMean()
+        mean_particle = self.pf.getSigmaClipped()
         best_particle = self.best_particle
         mean_pos = np.array([mean_particle['x'], mean_particle['y']])
         best_pos = np.array([best_particle['x'], best_particle['y']])
-        results = {"pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta']}
+        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta']}
         
         return results
         
