@@ -120,8 +120,10 @@ class NuscenesDataset(Dataset):
         
     def getData(self, t):
         t += self.first_idx
+        #dR = 0.4
         dR = 0.4
-        dAz = 0.05
+        #dAz = 0.05
+        dAz = 0.04
         z = self.__getRadarSweep(t)[:,0:2]
         #z = z[:, [1, 0]]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
@@ -292,8 +294,12 @@ class NuscenesDataset(Dataset):
             lanes.append(self.__extractPolynomFromLane(closest_lane))
             for lane in incoming_lane:
                 lanes.append(self.__extractPolynomFromLane(lane))
+                for ilane in self.nusc_map.get_incoming_lane_ids(lane):
+                    lanes.append(self.__extractPolynomFromLane(ilane))
             for lane in outgoing_lane:
                 lanes.append(self.__extractPolynomFromLane(lane))
+                for olane in self.nusc_map.get_incoming_lane_ids(lane):
+                    lanes.append(self.__extractPolynomFromLane(olane))
         else:
             lane_ids = self.nusc_map.get_records_in_radius(trns[0], trns[1], 2, ['lane', 'lane_connector'])
             nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']

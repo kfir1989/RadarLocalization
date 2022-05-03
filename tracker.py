@@ -3,6 +3,7 @@ from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise, Saver
 from numpy.polynomial import polynomial as P
 from utils import *
+import detector
     
 class Tracker:
     def __init__(self):
@@ -14,8 +15,8 @@ class Tracker:
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 5
-        self.ext_max_non_update_iterations = 6
+        self.pnt_max_non_update_iterations = 12
+        self.ext_max_non_update_iterations = 10
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -125,6 +126,7 @@ class Tracker:
             else:
                 i_trk = i_trk_e
                 trk = self.ext_object_list[i_trk]
+                trk.counter_update += 1
                 Hse = np.array([1 if x < trk.getStateVector()[3] else 0, 1 if x > trk.getStateVector()[4] else 0])
                 H = np.array([[0, 0, 0, Hse[0], Hse[1]],[1, x, x**2, 0, 0]])
                 R = cov
@@ -146,12 +148,13 @@ class Tracker:
             new_trk = PointObjectTrack(x=x.reshape(1,-1), P=cov, create_frame_idx=self.frame_idx)
             self.pnt_object_list.append(new_trk)
             
-    def trackInitExt(self, polynom):
+    def trackInitExt(self, polynom, generated_points):
         x = np.array([polynom["f"].c[2], polynom["f"].c[1], polynom["f"].c[0], polynom["x_start"], polynom["x_end"]]).T
         trk_similar_test = True
-        if(not trk_similar_test or not self.isTrkSimilar(x)):
+        if (not trk_similar_test or not self.isTrkSimilar(x)):
             new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx)
-            #print("created an extended object!", x)
+            new_trk.static_cars_flag = detector.detectCarsInARow(generated_points)
+            print("created an extended object!", x, "static_cars_flag", new_trk.static_cars_flag)
             self.ext_object_list.append(new_trk)
             return True
         else:
@@ -203,7 +206,7 @@ class Tracker:
                     f = np.poly1d(fit)
                     polynom = {"f":f,"x_start":min(xy[0,:]),"x_end":max(xy[0,:]),"P": covP}
                     #print("polynom was generated!", polynom)
-                    status = self.trackInitExt(polynom)
+                    status = self.trackInitExt(polynom, xy.T)
                     if status:
                         self.debug["pgpol"].append({"points": xy, "polynom":polynom})
                     PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
@@ -363,7 +366,7 @@ class Tracker:
         polynoms = []
         for trk in self.ext_object_list:
             x = trk.getStateVector()
-            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4]})
+            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4],"static_cars_flag":trk.static_cars_flag})
             
         return polynoms
     
@@ -376,5 +379,4 @@ class Tracker:
             
     def getExtendedTracks(self):
         return self.ext_object_list
-            
         

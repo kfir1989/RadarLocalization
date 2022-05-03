@@ -72,24 +72,49 @@ class PF:
         transform_matrix = rotate_matrix
         transform_matrix[0,2] += dx
         transform_matrix[1,2] += dy
+        
+        #print("dx,dy",dx,dy)
 
         transformed_map = cv2.warpAffine(src=padded_map, M=transform_matrix, dsize=(width, height))
         
         center = np.array([center[0],center[1],1])
         transformed_center = np.dot(transform_matrix,np.array(center))
         transformed_center = np.array([transformed_center[0], transformed_center[1], particle["theta"]])
+        #print("transformed_center", transformed_center)
         
         return transformed_map, transformed_center
    
-    def computeDist(self, extTrack, sx, sy):
+    def computeDist(self, extTrack, sx, sy, heading):
         state = extTrack.getStateVector()
-        P = extTrack.getStateCovarianceMatrix()
-        Ha = np.array([1, sx, sx**2])
-        P_match = np.dot(np.dot(Ha, P[0:3,0:3]), Ha.T)
-        y_match = state[0] + state[1] * sx + state[2] * sx**2
+        if 0:
+            P = extTrack.getStateCovarianceMatrix()
+            Ha = np.array([1, sx, sx**2])
+            P_match = np.dot(np.dot(Ha, P[0:3,0:3]), Ha.T)
+            y_match = state[0] + state[1] * sx + state[2] * sx**2
+            return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
+        else:
+            x_on_polynom = np.linspace(state[3], state[4], 100)
+            y_on_polynom = state[0] + state[1] * x_on_polynom + state[2] * x_on_polynom**2
+            points_on_polynom = np.array([x_on_polynom, y_on_polynom]).T
+            map_point = np.array([sx, sy]).reshape(1,2)
+            it = np.argmin(np.linalg.norm(points_on_polynom - map_point,axis=1),axis=0)
+
+            R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+            dxdy = points_on_polynom[it, :]-map_point
+            dxdy_rotated = np.dot(R, dxdy.T)
+            sigma_along_track = 0.5
+            sigma_cross_track = 1
+            P = np.array([[sigma_along_track, 0],[0, sigma_cross_track]])
+            det = np.linalg.det(P)
+            dist = np.dot(np.dot(dxdy_rotated.T,np.linalg.inv(P)),dxdy_rotated)
+            #l = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * dist)
+
+            #print("dxdy", dxdy, "dxdy_rotated", dxdy_rotated, "dist", dist, "l", l)
+            return dist
         
         #print(sx, sy, y_match, P_match, state)
-        return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
+        #return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
+        
     
     def getClosestPointToDrivableArea(self, pos, drivableArea):
         drivable_area_indices = np.argwhere(drivableArea > 0)
@@ -154,8 +179,11 @@ class PF:
                 R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
                 xy = np.array([particle["x"], particle["y"]])
                 xy_rotated = np.dot(R, xy)
-                sigma_along_track = 0.1 if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else 0.05
-                xy_rotated_plus_errs = xy_rotated + np.array([np.random.normal(0, sigma_along_track), np.random.normal(0, 0.05)])
+                sigma_along_track = 0.1 if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else 0.04
+                error_along_track = np.random.normal(0, sigma_along_track)
+                sigma_cross_track = 0
+                error_cross_track = 0
+                xy_rotated_plus_errs = xy_rotated + np.array([error_along_track, error_cross_track])
                 xy_rotated_back = np.dot(np.linalg.inv(R), xy_rotated_plus_errs)
                 particle["x"] = xy_rotated_back[0]
                 particle["y"] = xy_rotated_back[1]
@@ -174,24 +202,29 @@ class PF:
     def eval_sensor_model(self, worldRef, extTracks, roadMap):
         #rate each particle
         for ext_track in extTracks:
+            #trk_age = ext_track.last_update_frame_idx - ext_track.create_frame_idx
+            #trk_n_updates = ext_track.counter_update
+            #alpha = 0.5
+            weight = 1#(alpha * trk_age + (1-alpha) * trk_n_updates) * 0.01
+            #print("trk_age", trk_age, "trk_n_updates", trk_n_updates, "weight", weight)
             for particle in self.particles:
-                P_total = 1e-6 # for accumulating probabilities
+                cost_total = 1e-6 # for accumulating probabilities
                 #transform map according to worldRef and particle info
                 transformed_map, transformed_center = self.transformMap(roadMap, worldRef, particle)
                 world_xs,world_xe,world_ys,world_ye = self.getXYLimits(ext_track)
                 map_limits = self.world2Map(np.array([[world_xs,world_ys],[world_xe,world_ye]]), worldRef, transformed_center)
                 map_xs,map_xe,map_ys,map_ye = int(min(map_limits[0,0], map_limits[1,0])), int(max(map_limits[0,0], map_limits[1,0])), int(min(map_limits[0,1], map_limits[1,1])), int(max(map_limits[0,1], map_limits[1,1]))
-                (row,col) = np.where(transformed_map[map_xs:map_xe,map_ys:map_ye])
+                (row,col) = np.where(transformed_map[map_ys:map_ye,map_xs:map_xe])
                 for imap in range(0,row.shape[0]):
-                    seg_pos = self.map2World(np.array([row[imap]+map_xs, col[imap]+map_ys]), worldRef, transformed_center)
-                    sx = seg_pos[0]
-                    sy = seg_pos[1]
+                    seg_pos = self.map2World(np.array([row[imap]+map_ys, col[imap]+map_xs]), worldRef, transformed_center)
+                    sy = seg_pos[0]
+                    sx = seg_pos[1]
                     #print("worldRef", worldRef, "particle", particle, "np.array([row[imap]+map_xs, col[imap]+map_ys])", np.array([row[imap]+map_xs, col[imap]+map_ys]), "map_xe", map_xe, "map_ye", map_ye)
                     #calculate likelihood of matching between polynom and map-segment
-                    Pi = self.computeDist(ext_track, sx, sy)
+                    cost = self.computeDist(ext_track, sx, sy, worldRef[2])
                     #combine (independent) measurements
-                    P_total += Pi
-                particle['weight'] = P_total
+                    cost_total += weight * cost
+                particle['weight'] = 1 / cost_total #cost instead of probability
 
         #normalize weights
         normalizer = sum([p['weight'] for p in self.particles])

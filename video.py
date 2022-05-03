@@ -239,7 +239,7 @@ class NuscenesVideo:
         self.ax[1,2].scatter(pos[0]-self.first_pos[0]+self.patch_size*0.5,pos[1]-self.first_pos[1]+self.patch_size*0.5,s=10,color="red")
             
         self.counter += 1
-        plt.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
+        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         if not self.history:
             self.ax[0,0].clear()  
             self.ax[0,2].clear()
@@ -281,10 +281,12 @@ class NuscenesVideoDebug:
         self.prior_y_lim_max = -1e6
         
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime"]
-        self.dir_name = "nuscenes_images_debug_{}".format(scene)
+        self.dir_name = "images/nuscenes_images_debug_{}".format(scene)
+        os.system("mkdir -p " + self.dir_name)
         self.history = history
         self.counter = 0
         self.scene = scene
+        self.first = True
         
     def save(self, idx, video_data, polynoms, pointTracks, nusc_map, debug, video_with_priors=False):
         pc = video_data['pc']
@@ -340,9 +342,14 @@ class NuscenesVideoDebug:
             self.ax[0,2].set_xlim([self.prior_x_lim_min,self.prior_x_lim_max])
             self.ax[0,2].set_ylim([self.prior_y_lim_min,self.prior_y_lim_max])
             
+        if self.first:
+            self.first = False
+            self.first_pos = pos
+            
         self.ax[1,0].set_title("Points that generated a new polynom", fontsize=20)
-        self.ax[1,0].set_xlim(xlim)
-        self.ax[1,0].set_ylim(ylim)
+        print("xlim", xlim, "self.first_pos[0]", self.first_pos[0])
+        self.ax[1,0].set_xlim([x-self.first_pos[0] for x in xlim])
+        self.ax[1,0].set_ylim([y-self.first_pos[1] for y in ylim])
         self.ax[1,0] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[1,0])
         for c,pair in enumerate(debug["pgpol"]):
             x_plot = np.linspace(pair["polynom"]["x_start"], pair["polynom"]["x_end"], 100)
@@ -351,16 +358,16 @@ class NuscenesVideoDebug:
             self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
             
         self.ax[1,1].set_title("Points that updated point tracks", fontsize=20)
-        self.ax[1,1].set_xlim(xlim)
-        self.ax[1,1].set_ylim(ylim)
+        self.ax[1,1].set_xlim([x-self.first_pos[0] for x in xlim])
+        self.ax[1,1].set_ylim([y-self.first_pos[1] for y in ylim])
         self.ax[1,1] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[1,1])
         for pair in debug["mupoi"]:
             self.ax[1,1].scatter(pair["measurements"][0], pair["measurements"][1],color='blue')
             self.ax[1,1].scatter(pair["points"][0], pair["points"][1],color='orange')
             
         self.ax[1,2].set_title("Points that updated extended tracks", fontsize=20)
-        self.ax[1,2].set_xlim(xlim)
-        self.ax[1,2].set_ylim(ylim)
+        self.ax[1,2].set_xlim([x-self.first_pos[0] for x in xlim])
+        self.ax[1,2].set_ylim([y-self.first_pos[1] for y in ylim])
         self.ax[1,2] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[1,2])
         unique_polynoms = set(d['id'] for d in debug["mupol"])
         print("len(unique_polynoms)", len(unique_polynoms))
@@ -379,7 +386,7 @@ class NuscenesVideoDebug:
             self.ax[1,2].scatter(xy[0,:], xy[1,:],c=self.colors[c])
             
         self.counter += 1
-        plt.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
+        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         if not self.history:
             self.ax[0,0].clear()  
             self.ax[0,2].clear()
@@ -449,8 +456,8 @@ class PFVideo:
         self.imu_graph_cross_track_err, = self.ax[1,0].plot([], [], color="red",linewidth=3,label='GT-IMU')
         self.ax[1,0].set_title("Cross-Track Error", fontsize=20)
         self.ax[1,0].set_xlim([0,N])
-        self.ax[1,0].set_ylim([0,8])
-        self.ax[1,0].set(xlabel='frame #', ylabel='L1 err [m]')
+        self.ax[1,0].set_ylim([-4,4])
+        self.ax[1,0].set(xlabel='frame #', ylabel='signed err [m]')
         self.ax[1,0].legend(loc="upper left")
         
         #self.along_track_pos = np.copy(nanArray)
@@ -468,8 +475,8 @@ class PFVideo:
         self.pf_graph_along_track_err, = self.ax[1,1].plot([], [], color="red",linewidth=3,label='GT-IMU')
         self.ax[1,1].set_title("Along-Track Error", fontsize=20)
         self.ax[1,1].set_xlim([0,N])
-        self.ax[1,1].set_ylim([0,8])
-        self.ax[1,1].set(xlabel='frame #', ylabel='L1 err [m]')
+        self.ax[1,1].set_ylim([-8,8])
+        self.ax[1,1].set(xlabel='frame #', ylabel='signed err [m]')
         self.ax[1,1].legend(loc="upper left")
         
         self.ax[0,2].set_title("GT track and polynoms on Map", fontsize=20)
@@ -519,13 +526,15 @@ class PFVideo:
         ylim = [self.y_lim_min,self.y_lim_max]
         
         gt_track_pos, pf_track_pos, imu_track_pos = self.calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
-        pf_track_errors = np.abs(gt_track_pos-pf_track_pos)
-        imu_track_errors = np.abs(gt_track_pos-imu_track_pos)
+        pf_track_errors = pf_track_pos - gt_track_pos
+        imu_track_errors = imu_track_pos - gt_track_pos
         
         #Cross-Track Position(t)
         self.ax[0,0].scatter(self.counter+1, gt_track_pos[0],color='green',alpha=0.6,label='GT')
         self.ax[0,0].scatter(self.counter+1, pf_track_pos[0],color='blue',alpha=0.6,label='PF')
         self.ax[0,0].scatter(self.counter+1, imu_track_pos[0],color='red',alpha=0.6,label='IMU')
+        if self.counter == 0:
+            self.ax[0,0].legend(loc="upper right")
         
         #Cross-Track Err(t)
         self.cross_track_pos_err[self.counter, :] = np.array([pf_track_errors[0], imu_track_errors[0]])
@@ -536,6 +545,8 @@ class PFVideo:
         self.ax[0,1].scatter(self.counter+1, gt_track_pos[1],color='green',alpha=0.6,label='GT')
         self.ax[0,1].scatter(self.counter+1, pf_track_pos[1],color='blue',alpha=0.6,label='PF')
         self.ax[0,1].scatter(self.counter+1, imu_track_pos[1],color='red',alpha=0.6,label='IMU')
+        if self.counter == 0:
+            self.ax[0,1].legend(loc="upper right")
         
         #Along-Track Err(t)
         self.along_track_pos_err[self.counter, :] = np.array([pf_track_errors[1], imu_track_errors[1]])
@@ -561,8 +572,10 @@ class PFVideo:
                 self.ax[0,2].imshow(map_mask[i], origin='lower')
                 #self.ax[0,2].text(canvas_size[0] * 0.5, canvas_size[1] * 1.1, layer_names[i])
                 self.ax[0,2].grid(False)
+                
                 self.ax[1,2].imshow(map_mask[i], origin='lower')
                 #self.ax[1,2].text(canvas_size[0] * 0.5, canvas_size[1] * 1.1, layer_names[i])
+                self.ax[1,2].legend(loc="upper left")
                 self.ax[1,2].grid(False)
                 self.ax2.imshow(map_mask[i], origin='lower')
                 self.ax2.grid(False)
@@ -576,12 +589,16 @@ class PFVideo:
         for c,polynom in enumerate(polynoms):
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             y_plot = polynom["f"](x_plot)
-            self.ax[0,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="brown",linewidth=2) 
-        self.ax[0,2].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="blue")
+            self.ax[0,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2,label="polynoms") 
+        self.ax[0,2].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="green",label="GT")
+        if self.counter == 0:
+            self.ax[0,2].legend(loc="upper left")
         
         #IMU, PF on map
-        self.ax[1,2].scatter(pf_mean_pos[0]-self.first_pos[0]+self.patch_size*0.5,pf_mean_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="blue")
-        self.ax[1,2].scatter(imu_pos[0]-self.first_pos[0]+self.patch_size*0.5,imu_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="red")
+        self.ax[1,2].scatter(pf_mean_pos[0]-self.first_pos[0]+self.patch_size*0.5,pf_mean_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="blue",label="PF")
+        self.ax[1,2].scatter(imu_pos[0]-self.first_pos[0]+self.patch_size*0.5,imu_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="red",label="IMU")
+        if self.counter == 0:
+            self.ax[1,2].legend(loc="upper left")
 
         #PF state
         pf_x = [p['x'] for p in all_particles]+ego_path[0,0]-self.first_pos[0]+self.patch_size*0.5
@@ -593,7 +610,7 @@ class PFVideo:
         self.history_pf_y = pf_y
         
         self.counter += 1
-        
+
         self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.fig2.savefig(os.path.join(self.dir_name, f'track_{idx}_pf.png'))
         

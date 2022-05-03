@@ -32,7 +32,7 @@ class PointObjectDataAssociator():
         
         
 class ExtObjectDataAssociator():
-    def __init__(self, dim=2,deltaL=1,deltaS=8,deltaE=8):
+    def __init__(self, dim=2,deltaL=1,deltaS=4,deltaE=4):
         self.deltaL = deltaL
         self.deltaS = deltaS # delta x start
         self.deltaE = deltaL # delta x end
@@ -119,7 +119,7 @@ class PointObjectTrack:
         return self.last_update_frame_idx
         
 class ExtendedObjectTrack:
-    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.98):
+    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995):
         self.kf = KalmanFilter(dim_x=5, dim_z=2)
         x0 = np.array([[5, 0, 0, 0, 0]]).T # a1, a2, a3, x_start, x_end
         P0 = np.diag([2, 1, 1, 20, 20]) #Initial state covariance matrix
@@ -135,9 +135,11 @@ class ExtendedObjectTrack:
         self.kf.Q[3,3] = 5
         self.kf.Q[4,4] = 5
         self.saver = Saver(self.kf)
-        self.frame_idx = create_frame_idx
+        self.create_frame_idx = create_frame_idx
         self.last_update_frame_idx = create_frame_idx
         self.hits = [1]
+        self.static_cars_flag = False
+        self.counter_update = 0
         
     def predict(self):
         self.kf.predict()
