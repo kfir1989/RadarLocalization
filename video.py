@@ -6,6 +6,8 @@ from os import listdir
 from os.path import isfile, join
 import cv2
 import re
+from map_utils import getRoadBorders, getCombinedMap
+from matplotlib.ticker import MaxNLocator
 
 class SimulationVideo:
     def __init__(self):
@@ -214,24 +216,11 @@ class NuscenesVideo:
         
         #map
         if self.counter == 0:
-            patch_angle = 0
             self.first_pos = pos
             self.patch_size = 500
-            patch_box = (pos[0], pos[1], self.patch_size, self.patch_size)
-            layer_names = ['walkway']
-            canvas_size = (self.patch_size, self.patch_size)
-            map_mask = nusc_map.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
-            #self.ax[1,2].set_title("Map", fontsize=20)
-            if self.scene == 5:
-                self.ax[1,2].set_xlim([0,0.5*self.patch_size+50])
-                self.ax[1,2].set_ylim([0.5*self.patch_size-50,self.patch_size])
-            elif self.scene == 1:
-                self.ax[1,2].set_xlim([0.5*self.patch_size+-50,self.patch_size])
-                self.ax[1,2].set_ylim([100,self.patch_size-100])
-            for i in range(len(map_mask)):
-                self.ax[1,2].imshow(map_mask[i], origin='lower')
-                self.ax[1,2].text(canvas_size[0] * 0.5, canvas_size[1] * 1.1, layer_names[i])
-                self.ax[1,2].grid(False)
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+            self.ax[1,2].imshow(edges, origin='lower')
+            self.ax[1,2].grid(False)
         for c,polynom in enumerate(polynoms):
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             y_plot = polynom["f"](x_plot)
@@ -421,6 +410,7 @@ class PFVideo:
     def __init__(self, scene=5, history=False, N=410):
         self.fig, self.ax = plt.subplots(2,3,figsize=(30,14))
         self.fig2, self.ax2 = plt.subplots(1,1,figsize=(30,14))
+        self.fig3, self.ax3 = plt.subplots(1,3,figsize=(30,14))
         self.x_lim_min = 1e6
         self.x_lim_max = 1e-6
         self.y_lim_min = 1e6
@@ -516,6 +506,8 @@ class PFVideo:
         ego_path = video_data["ego_path"][:,0:2]
         ego_trns = video_data["ego_trns"]
         all_particles = mm_results['all_particles']
+        cost_true = mm_results['cost_true']
+        cost_mean = mm_results['cost_mean']
         
         self.x_lim_min = min(self.x_lim_min, min(gt_pos[0], pf_mean_pos[0]))
         self.x_lim_max = max(self.x_lim_max, max(gt_pos[0], pf_mean_pos[0]))
@@ -561,30 +553,30 @@ class PFVideo:
             y_min = np.min(ego_path[:,1])
             y_max = np.max(ego_path[:,1])
             y_mean = 0.5*(y_min+y_max)
-            patch_angle = 0
+
             self.first_pos = [x_mean, y_mean]
             self.patch_size = 500
-            patch_box = (x_mean, y_mean, self.patch_size, self.patch_size)
-            layer_names = ['walkway']
-            canvas_size = (self.patch_size, self.patch_size)
-            map_mask = nusc_map.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
-            for i in range(len(map_mask)):
-                self.ax[0,2].imshow(map_mask[i], origin='lower')
-                #self.ax[0,2].text(canvas_size[0] * 0.5, canvas_size[1] * 1.1, layer_names[i])
-                self.ax[0,2].grid(False)
-                
-                self.ax[1,2].imshow(map_mask[i], origin='lower')
-                #self.ax[1,2].text(canvas_size[0] * 0.5, canvas_size[1] * 1.1, layer_names[i])
-                self.ax[1,2].legend(loc="upper left")
-                self.ax[1,2].grid(False)
-                self.ax2.imshow(map_mask[i], origin='lower')
-                self.ax2.grid(False)
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+            self.map = edges
+
+            self.ax[0,2].imshow(edges, origin='lower')
+            self.ax[0,2].grid(False)
+
+            self.ax[1,2].imshow(edges, origin='lower')
+            self.ax[1,2].legend(loc="upper left")
+            self.ax[1,2].grid(False)
+            self.ax2.imshow(edges, origin='lower')
+            self.ax2.grid(False)
             self.ax[0,2].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
             self.ax[0,2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
             self.ax[1,2].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
             self.ax[1,2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
             self.ax2.set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
             self.ax2.set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
+            self.ax3[1].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
+            self.ax3[1].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
+            self.ax3[2].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
+            self.ax3[2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
         
         for c,polynom in enumerate(polynoms):
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
@@ -609,12 +601,212 @@ class PFVideo:
         self.history_pf_x = pf_x
         self.history_pf_y = pf_y
         
+        #Cost function
+        n_polynoms = len(polynoms)
+        if n_polynoms > 0:
+            print("n_polynoms", n_polynoms, "cost_true", cost_true, "cost_mean", cost_mean)
+            self.ax3[0].plot(range(1,n_polynoms+1),cost_true,color="green",alpha=1, label="GT")
+            self.ax3[0].plot(range(1,n_polynoms+1),cost_mean,color="blue",alpha=1, label="PF")
+            self.ax3[0].legend(loc="upper right")
+            self.ax3[0].set_xlim([0,n_polynoms+1])
+            self.ax3[0].xaxis.set_major_locator(MaxNLocator(integer=True))
+            
+            self.ax3[1].imshow(self.map, origin='lower')
+            self.ax3[1].grid(False)
+            self.ax3[2].imshow(self.map, origin='lower')
+            self.ax3[2].grid(False)
+            for c,polynom in enumerate(polynoms):
+                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                y_plot = polynom["f"](x_plot)
+                self.ax3[1].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2) 
+                self.ax3[1].text(x_plot[0]-self.first_pos[0]+self.patch_size*0.5 + 2, y_plot[0]-self.first_pos[1]+self.patch_size*0.5+2, f"{c+1}", size=10)
+            self.ax3[1].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=8,color="green",label="GT")
+
+            self.ax3[1].legend(loc="upper left")
+
+            for c,polynom in enumerate(polynoms):
+                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                y_plot = polynom["f"](x_plot)
+                #translate
+                x_plot -= gt_pos[0] - pf_mean_pos[0]
+                y_plot -= gt_pos[1] - pf_mean_pos[1]
+                self.ax3[2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2) 
+                self.ax3[2].text(x_plot[0]-self.first_pos[0]+self.patch_size*0.5 + 2, y_plot[0]-self.first_pos[1]+self.patch_size*0.5+2, f"{c+1}", size=10)
+            self.ax3[2].scatter(pf_mean_pos[0]-self.first_pos[0]+self.patch_size*0.5,pf_mean_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=8,color="blue",label="PF")
+            
+            self.ax3[2].legend(loc="upper left")
+        
         self.counter += 1
 
         self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.fig2.savefig(os.path.join(self.dir_name, f'track_{idx}_pf.png'))
+        self.fig3.savefig(os.path.join(self.dir_name, f'track_{idx}_cost.png'))
         
-        #self.ax2.clear()
+        self.ax3[0].clear()
+        self.ax3[1].clear()
+        self.ax3[2].clear()
+        
+    def generate(self, name, fps=1):
+        filenames = [f for f in os.listdir(self.dir_name) if os.path.isfile(os.path.join(self.dir_name, f))]
+        filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+        
+        frame = cv2.imread(os.path.join(self.dir_name, filenames[0]))
+        height, width, layers = frame.shape
+        video = cv2.VideoWriter(name, fourcc=cv2.VideoWriter_fourcc('M','J','P','G'), frameSize=(width,height),fps=fps)
+        
+        for filename in filenames:
+            #print(filename)
+            video.write(cv2.imread(os.path.join(self.dir_name, filename)))
+        
+        cv2.destroyAllWindows()
+        video.release()
+        
+        
+class PFXYVideo:
+    def __init__(self, scene=5, history=False, N=410):
+        self.fig, self.ax = plt.subplots(2,3,figsize=(30,14))
+        self.x_lim_min = 1e6
+        self.x_lim_max = 1e-6
+        self.y_lim_min = 1e6
+        self.y_lim_max = 1e-6
+        
+        self.prior_x_lim_min = 1e6
+        self.prior_x_lim_max = -1e6
+        self.prior_y_lim_min = 1e6
+        self.prior_y_lim_max = -1e6
+        
+        self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime"]
+        self.dir_name = "images/pf_xy_images_{}".format(scene)
+        os.system("mkdir -p " + self.dir_name)
+        self.history = history
+        self.counter = 0
+        self.scene = scene
+        
+        nanArray = np.ones((N,3))
+        nanArray[:,:] = np.nan
+
+        self.ax[0,0].set_title("X Position", fontsize=20)
+        self.ax[0,0].set_xlim([0,N])
+        self.ax[0,0].set(xlabel='frame #', ylabel='X [m]')
+        self.ax[0,0].legend(loc="upper left")
+        
+        self.x_pos_err = np.copy(nanArray[:, 0:2])
+        self.pf_graph_x_err, = self.ax[1,0].plot([], [], color="blue",linewidth=3,label='GT-PF')
+        self.imu_graph_x_err, = self.ax[1,0].plot([], [], color="red",linewidth=3,label='GT-IMU')
+        self.ax[1,0].set_title("X position Error", fontsize=20)
+        self.ax[1,0].set_xlim([0,N])
+        self.ax[1,0].set_ylim([-4,4])
+        self.ax[1,0].set(xlabel='frame #', ylabel='signed err [m]')
+        self.ax[1,0].legend(loc="upper left")
+
+        self.ax[0,1].set_title("Y Position", fontsize=20)
+        self.ax[0,1].set_xlim([0,N])
+        self.ax[0,1].set(xlabel='frame #', ylabel='Y [m]')
+        self.ax[0,1].legend(loc="upper left")
+        
+        self.y_pos_err = np.copy(nanArray[:, 0:2])
+        self.gt_graph_y_err, = self.ax[1,1].plot([], [], color="blue",linewidth=3,label='GT-PF')
+        self.pf_graph_y_err, = self.ax[1,1].plot([], [], color="red",linewidth=3,label='GT-IMU')
+        self.ax[1,1].set_title("Y position Error", fontsize=20)
+        self.ax[1,1].set_xlim([0,N])
+        self.ax[1,1].set_ylim([-8,8])
+        self.ax[1,1].set(xlabel='frame #', ylabel='signed err [m]')
+        self.ax[1,1].legend(loc="upper left")
+        
+        self.ax[0,2].set_title("GT track and polynoms on Map", fontsize=20)
+        self.ax[1,2].set_title("IMU and PF tracks on map", fontsize=20)
+        
+        self.history_pf_x = None
+        self.history_pf_y = None  
+        
+    def save(self, idx, video_data, mm_results, polynoms, nusc_map):
+        gt_pos = np.array(video_data['pos'])
+        gt_heading = np.deg2rad(video_data['heading'])
+        pf_best_pos = mm_results['pf_best_pos']
+        pf_best_theta = mm_results['pf_best_theta']
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        pf_mean_theta = mm_results['pf_mean_theta']
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        all_particles = mm_results['all_particles']
+        
+        self.x_lim_min = min(self.x_lim_min, min(gt_pos[0], pf_mean_pos[0]))
+        self.x_lim_max = max(self.x_lim_max, max(gt_pos[0], pf_mean_pos[0]))
+        self.y_lim_min = min(self.y_lim_min, min(gt_pos[1], pf_mean_pos[1]))
+        self.y_lim_max = max(self.y_lim_max, max(gt_pos[1], pf_mean_pos[1]))
+        
+        xlim = [self.x_lim_min,self.x_lim_max]
+        ylim = [self.y_lim_min,self.y_lim_max]
+        
+        pf_xy_errors = pf_mean_pos - gt_pos[0:2]
+        imu_xy_errors = imu_pos - gt_pos[0:2]
+        
+        #X Position(t)
+        self.ax[0,0].scatter(self.counter+1, gt_pos[0],color='green',alpha=0.6,label='GT')
+        self.ax[0,0].scatter(self.counter+1, pf_mean_pos[0],color='blue',alpha=0.6,label='PF')
+        self.ax[0,0].scatter(self.counter+1, imu_pos[0],color='red',alpha=0.6,label='IMU')
+        if self.counter == 0:
+            self.ax[0,0].legend(loc="upper right")
+        
+        #X Err(t)
+        self.x_pos_err[self.counter, :] = np.array([pf_xy_errors[0], imu_xy_errors[0]])
+        self.pf_graph_x_err.set_data(range(self.counter+1), self.x_pos_err[0:self.counter+1, 0])
+        self.imu_graph_x_err.set_data(range(self.counter+1), self.x_pos_err[0:self.counter+1, 1])
+        
+        #Along-Track Position(t)
+        self.ax[0,1].scatter(self.counter+1, gt_pos[1],color='green',alpha=0.6,label='GT')
+        self.ax[0,1].scatter(self.counter+1, pf_mean_pos[1],color='blue',alpha=0.6,label='PF')
+        self.ax[0,1].scatter(self.counter+1, imu_pos[1],color='red',alpha=0.6,label='IMU')
+        if self.counter == 0:
+            self.ax[0,1].legend(loc="upper right")
+        
+        #Along-Track Err(t)
+        self.y_pos_err[self.counter, :] = np.array([pf_xy_errors[1], imu_xy_errors[1]])
+        self.gt_graph_y_err.set_data(range(self.counter+1), self.y_pos_err[0:self.counter+1, 0])
+        self.pf_graph_y_err.set_data(range(self.counter+1), self.y_pos_err[0:self.counter+1, 1])
+        
+        #Polynoms and GT on map
+        if self.counter == 0:
+            x_min = np.min(ego_path[:,0])
+            x_max = np.max(ego_path[:,0])
+            x_mean = 0.5*(x_min+x_max)
+            y_min = np.min(ego_path[:,1])
+            y_max = np.max(ego_path[:,1])
+            y_mean = 0.5*(y_min+y_max)
+
+            self.first_pos = [x_mean, y_mean]
+            self.patch_size = 500
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+
+            self.ax[0,2].imshow(edges, origin='lower')
+            self.ax[0,2].grid(False)
+            
+            self.ax[1,2].imshow(edges, origin='lower')
+            self.ax[1,2].legend(loc="upper left")
+            self.ax[1,2].grid(False)
+            self.ax[0,2].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
+            self.ax[0,2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
+            self.ax[1,2].set_xlim([self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50])
+            self.ax[1,2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
+        
+        for c,polynom in enumerate(polynoms):
+            x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            y_plot = polynom["f"](x_plot)
+            self.ax[0,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2,label="polynoms") 
+        self.ax[0,2].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="green",label="GT")
+        if self.counter == 0:
+            self.ax[0,2].legend(loc="upper left")
+        
+        #IMU, PF on map
+        self.ax[1,2].scatter(pf_mean_pos[0]-self.first_pos[0]+self.patch_size*0.5,pf_mean_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="blue",label="PF")
+        self.ax[1,2].scatter(imu_pos[0]-self.first_pos[0]+self.patch_size*0.5,imu_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="red",label="IMU")
+        if self.counter == 0:
+            self.ax[1,2].legend(loc="upper left")
+        
+        self.counter += 1
+
+        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         
     def generate(self, name, fps=1):
         filenames = [f for f in os.listdir(self.dir_name) if os.path.isfile(os.path.join(self.dir_name, f))]

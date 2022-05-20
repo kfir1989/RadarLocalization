@@ -6,6 +6,7 @@ import scipy.stats
 from scipy.spatial.distance import cdist
 
 from utils import ExtObjectDataAssociator
+from map_utils import getRoadBorders, getCombinedMap
 
 class PF:
     def __init__(self, N):
@@ -16,9 +17,10 @@ class PF:
         self.sigma_theta = 0.01
         #IMU measurements estimated errors
         self.sigma_rot1 = 0.0001
-        self.sigma_trans = 0.05
+        self.sigma_trans = 0.02
         self.sigma_rot2 = 0.01
         self.current_odom_xy_theta = None
+        self.uncertainty_flag = False
         
     @staticmethod
     def getXYLimits(extTrack):
@@ -34,30 +36,42 @@ class PF:
     def world2Map(pos, worldRef, mapRef):
         pos[:, 0] -= worldRef[0]
         pos[:, 1] -= worldRef[1]
-        dtheta = mapRef[2] - worldRef[2]
-        
-        transform_matrix = np.array([[np.cos(dtheta), -np.sin(dtheta)],
-                                     [np.sin(dtheta), np.cos(dtheta)]])
-        
-        transformed_pose = np.dot(transform_matrix, pos)
-        transformed_pose[0] += mapRef[0]
-        transformed_pose[1] += mapRef[1]
-        
-        return transformed_pose
-    
+        if 0:
+            dtheta = mapRef[2] - worldRef[2]
+
+            transform_matrix = np.array([[np.cos(dtheta), -np.sin(dtheta)],
+                                         [np.sin(dtheta), np.cos(dtheta)]])
+
+            transformed_pose = np.dot(transform_matrix, pos)
+            transformed_pose[0] += mapRef[0]
+            transformed_pose[1] += mapRef[1]
+            
+            return transformed_pose
+        else:
+            pos[:, 0] += mapRef[0]
+            pos[:, 1] += mapRef[1]
+            
+            return pos
+
     @staticmethod
     def map2World(pos, worldRef, mapRef):
         pos[0] -= mapRef[0]
         pos[1] -= mapRef[1]
-        dtheta = worldRef[2] - mapRef[2]
-        transform_matrix = np.array([[np.cos(dtheta), -np.sin(dtheta)],
-                                     [np.sin(dtheta), np.cos(dtheta)]])
+        if 0:
+            dtheta = worldRef[2] - mapRef[2]
+            transform_matrix = np.array([[np.cos(dtheta), -np.sin(dtheta)],
+                                         [np.sin(dtheta), np.cos(dtheta)]])
+
+            transformed_pose = np.dot(transform_matrix, pos)
+            transformed_pose[0] += worldRef[0]
+            transformed_pose[1] += worldRef[1]
         
-        transformed_pose = np.dot(transform_matrix, pos)
-        transformed_pose[0] += worldRef[0]
-        transformed_pose[1] += worldRef[1]
-        
-        return transformed_pose
+            return transformed_pose
+        else:
+            pos[0] += worldRef[0]
+            pos[1] += worldRef[1]
+            
+            return pos
     
     @staticmethod
     def transformMap(roadMap, worldRef, particle):
@@ -82,44 +96,124 @@ class PF:
         transformed_center = np.array([transformed_center[0], transformed_center[1], particle["theta"]])
         #print("transformed_center", transformed_center)
         
-        return transformed_map, transformed_center
+    @staticmethod
+    def transformPolynom(polynom, worldRef, particle):
+        #print("worldRef[0]", worldRef[0], "worldRef[1]", worldRef[1], "particle[x]", particle["x"], "particle[y]", particle["y"])
+        dx = worldRef[0]-particle["x"]
+        dy = worldRef[1]-particle["y"]
+        dtheta = worldRef[2]-particle["theta"]
+        center = (particle["x"], particle["y"])
+        rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=dtheta, scale=1)
+        transform_matrix = rotate_matrix
+        transform_matrix[0,2] -= dx
+        transform_matrix[1,2] -= dy
+        
+        b = np.ones((polynom.shape[0],1))
+        polynom_expanded = np.hstack((polynom,b))
+        
+        transformed_polynom = np.dot(transform_matrix,polynom_expanded.T)
+
+        return transformed_polynom.T
+    
+    def calcTrkWeight(self, extTrack):
+        if 0:
+            trk_age = extTrack.last_update_frame_idx - extTrack.create_frame_idx
+            trk_n_updates = extTrack.counter_update
+            alpha = 0.5
+            weight = (alpha * trk_age + (1-alpha) * trk_n_updates) * 0.01
+        else:
+            weight = 1
+        
+        return weight
    
     def computeDist(self, extTrack, sx, sy, heading):
         state = extTrack.getStateVector()
-        if 0:
-            P = extTrack.getStateCovarianceMatrix()
-            Ha = np.array([1, sx, sx**2])
-            P_match = np.dot(np.dot(Ha, P[0:3,0:3]), Ha.T)
-            y_match = state[0] + state[1] * sx + state[2] * sx**2
-            return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
-        else:
-            x_on_polynom = np.linspace(state[3], state[4], 100)
-            y_on_polynom = state[0] + state[1] * x_on_polynom + state[2] * x_on_polynom**2
-            points_on_polynom = np.array([x_on_polynom, y_on_polynom]).T
-            map_point = np.array([sx, sy]).reshape(1,2)
-            it = np.argmin(np.linalg.norm(points_on_polynom - map_point,axis=1),axis=0)
+        x_on_polynom = np.linspace(state[3], state[4], 100)
+        y_on_polynom = state[0] + state[1] * x_on_polynom + state[2] * x_on_polynom**2
+        points_on_polynom = np.array([x_on_polynom, y_on_polynom]).T
+        map_point = np.array([sx, sy]).reshape(1,2)
+        it = np.argmin(np.linalg.norm(points_on_polynom - map_point,axis=1),axis=0)
 
-            R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
-            dxdy = points_on_polynom[it, :]-map_point
-            dxdy_rotated = np.dot(R, dxdy.T)
-            sigma_along_track = 0.5
-            sigma_cross_track = 1
-            P = np.array([[sigma_along_track, 0],[0, sigma_cross_track]])
-            det = np.linalg.det(P)
-            dist = np.dot(np.dot(dxdy_rotated.T,np.linalg.inv(P)),dxdy_rotated)
-            #l = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * dist)
-
-            #print("dxdy", dxdy, "dxdy_rotated", dxdy_rotated, "dist", dist, "l", l)
-            return dist
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        dxdy = points_on_polynom[it, :]-map_point
+        dxdy_rotated = np.dot(R, dxdy.T)
+        sigma_along_track = 0.5
+        sigma_cross_track = 1
+        P = np.array([[sigma_along_track, 0],[0, sigma_cross_track]])
+        det = np.linalg.det(P)
+        dist = np.dot(np.dot(dxdy_rotated.T,np.linalg.inv(P)),dxdy_rotated)
         
-        #print(sx, sy, y_match, P_match, state)
-        #return self.ext_object_associator.calcLikelihood(sx, sy, y_match, P_match, state)
+        #l = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * dist)
+
+        #print("dxdy", dxdy, "dxdy_rotated", dxdy_rotated, "dist", dist, "l", l)
+        return dist
+        
+    def computeDist(self, polynom, boundaryPoints, heading, debug=False):
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        
+        polynom_rotated = np.dot(R, polynom.T).T
+        boundary_rotated = np.dot(R, boundaryPoints.T).T
+        dx = polynom_rotated[:,0].reshape(-1,1)-boundary_rotated[:,0].reshape(1,-1)
+        dy = polynom_rotated[:,1].reshape(-1,1)-boundary_rotated[:,1].reshape(1,-1)
+        dxdy_norm = np.sqrt(5*dx**2 + 0.5*dy**2) #dx has higher priority
+
+        it = dxdy_norm.argmin(axis=1)
+        dx_min = np.take_along_axis(dx, np.expand_dims(it, axis=-1), axis=1)
+        dy_min = np.take_along_axis(dy, np.expand_dims(it, axis=-1), axis=1)
+        dxdy_min = np.array([dx_min, dy_min])
+        dxdy_min = np.squeeze(dxdy_min, -1) if dxdy_min.ndim == 3 else dxdy_min
+        
+        sigma_along_track = 0.2
+        sigma_cross_track = 4
+        P = np.array([[sigma_along_track, 0],[0, sigma_cross_track]])
+        
+        dist = np.sum(np.dot((dxdy_min.T)**2,np.linalg.inv(P)), axis=1)
+        
+        #take 20% highest
+        n_elements = int(max(1, polynom.shape[0] / 5))
+        #print(dist.shape, n_elements)
+        top_ind = np.argpartition(dist, -n_elements)[-n_elements:]
+        top20_dist = dist[top_ind]
+        total_dist = np.mean(top20_dist)
+        if debug:
+            #print("total_dist", total_dist, "top20_dist", top20_dist)
+            print("total_dist", total_dist, "polynom", polynom, "boundaryPoints", boundaryPoints, "dxdy_min", dxdy_min.T, "(dxdy_min.T)**2", (dxdy_min.T)**2, "top20_dist", top20_dist, "n_elements", n_elements, "top_ind", top_ind, "it", it)
+            #raise Exception('Found ya!')
+
+        return total_dist
         
     
     def getClosestPointToDrivableArea(self, pos, drivableArea):
         drivable_area_indices = np.argwhere(drivableArea > 0)
         dists = cdist(pos, drivable_area_indices)
         return drivable_area_indices[np.argmin(dists)]
+    
+    def eval_polynom_map_match(self, ext_track, particle, worldRef, roadMap, debug=False):
+        height, width = roadMap.shape[:2]
+        map_center = (width/2, height/2)
+        weight = self.calcTrkWeight(ext_track)
+        state = ext_track.getStateVector()
+        x_polynom = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*10))
+        y_polynom = state[0] + state[1] * x_polynom + state[2] * x_polynom**2
+        polynom = np.array([x_polynom, y_polynom]).T
+        transformed_polynom = self.transformPolynom(polynom, worldRef, particle)
+        #print(transformed_polynom.shape)
+        world_xs,world_xe,world_ys,world_ye = transformed_polynom[0,0], transformed_polynom[-1,0], transformed_polynom[0,1], transformed_polynom[-1,1]
+        #print("world_xs", world_xs, "world_xe", world_xe, "world_ys", world_ys, "world_ye", world_ye)
+        padding = 5
+        map_limits = self.world2Map(np.array([[world_xs,world_ys],[world_xe,world_ye]]), worldRef, map_center)
+        map_xs,map_xe,map_ys,map_ye = max(0, int(min(map_limits[0,0], map_limits[1,0])) - padding), min(width-1, int(max(map_limits[0,0], map_limits[1,0])) + padding), max(0, int(min(map_limits[0,1], map_limits[1,1])) - padding), min(height-1, int(max(map_limits[0,1], map_limits[1,1])) + padding)
+        #print("map_xs", map_xs, "map_xe", map_xe, "map_ys", map_ys, "map_ye", map_ye)
+        (row,col) = np.where(roadMap[map_ys:map_ye,map_xs:map_xe])
+        if row.shape[0] > 0:
+            boundary_points = self.map2World(np.array([col+map_xs, row+map_ys]).astype('float64'), worldRef, map_center)
+            cost = self.computeDist(polynom=transformed_polynom, boundaryPoints=boundary_points.T, heading=worldRef[2],debug=debug)
+            #combine (independent) measurements
+            cost *= weight
+        else:
+            cost = 1e3
+           
+        return cost
 
     def initialize_particles(self, num_particles, worldRef):
         particles = []
@@ -179,7 +273,8 @@ class PF:
                 R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
                 xy = np.array([particle["x"], particle["y"]])
                 xy_rotated = np.dot(R, xy)
-                sigma_along_track = 0.1 if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else 0.04
+                sigma_factor = 10 if self.uncertainty_flag else 1
+                sigma_along_track = (sigma_factor * dt / 10) if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else (sigma_factor**2 * dt / 100)
                 error_along_track = np.random.normal(0, sigma_along_track)
                 sigma_cross_track = 0
                 error_cross_track = 0
@@ -198,15 +293,13 @@ class PF:
                     particle["x"] += dx
                     particle["y"] += dy
                     #print("after update: ", "particle[\"x\"]", particle["x"], "particle[\"y\"]", particle["y"])
+                    
+        self.uncertainty_flag = False
 
-    def eval_sensor_model(self, worldRef, extTracks, roadMap):
+    def eval_sensor_model_old(self, worldRef, extTracks, roadMap):
         #rate each particle
         for ext_track in extTracks:
-            #trk_age = ext_track.last_update_frame_idx - ext_track.create_frame_idx
-            #trk_n_updates = ext_track.counter_update
-            #alpha = 0.5
-            weight = 1#(alpha * trk_age + (1-alpha) * trk_n_updates) * 0.01
-            #print("trk_age", trk_age, "trk_n_updates", trk_n_updates, "weight", weight)
+            weight = self.calcTrkWeight(ext_track)
             for particle in self.particles:
                 cost_total = 1e-6 # for accumulating probabilities
                 #transform map according to worldRef and particle info
@@ -221,7 +314,7 @@ class PF:
                     sx = seg_pos[1]
                     #print("worldRef", worldRef, "particle", particle, "np.array([row[imap]+map_xs, col[imap]+map_ys])", np.array([row[imap]+map_xs, col[imap]+map_ys]), "map_xe", map_xe, "map_ye", map_ye)
                     #calculate likelihood of matching between polynom and map-segment
-                    cost = self.computeDist(ext_track, sx, sy, worldRef[2])
+                    cost = self.computeDist(extTrack=ext_track, sx=sx, sy=sy, heading=worldRef[2])
                     #combine (independent) measurements
                     cost_total += weight * cost
                 particle['weight'] = 1 / cost_total #cost instead of probability
@@ -231,6 +324,26 @@ class PF:
 
         for particle in self.particles:
             particle['weight'] = particle['weight'] / normalizer
+            
+    def eval_sensor_model(self, worldRef, extTracks, roadMap):
+        min_cost = 1e6
+        for particle in self.particles:
+            cost_total = 1e-6 # for accumulating probabilities
+            for ext_track in extTracks:
+                cost = self.eval_polynom_map_match(ext_track, particle, worldRef, roadMap)
+                min_cost = min(min_cost, cost)
+                cost_total += cost
+            particle['weight'] = 1 / cost_total #cost instead of probability
+
+        #normalize weights
+        normalizer = sum([p['weight'] for p in self.particles])
+
+        for particle in self.particles:
+            particle['weight'] = particle['weight'] / normalizer
+            
+        self.uncertainty_flag = True if (min_cost > 12 and len(extTracks) > 0) else False
+        if self.uncertainty_flag:
+            print("self.uncertainty_flag is True!!!")
 
     def resample_particles(self):
         # Returns a new set of particles obtained by performing
@@ -296,26 +409,15 @@ from nuscenes.map_expansion.map_api import NuScenesMap
 class MapMatching:
     def __init__(self, N=100):
         self.N = N
-        self.pf = PF(N=N)
-        
-    def getRoadBorders(self, nuscMap, worldRef, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.7):
-        patch_angle = 0
-        patch_size = 200
-        patch_box = (worldRef[0], worldRef[1], patch_size, patch_size)
-        canvas_size = (patch_size, patch_size)
-        map_mask = nuscMap.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
-        mask = map_mask[0]
-        mask_blur = cv2.GaussianBlur(mask, blur_area, 0)
-        edges = cv2.Canny(image=mask_blur, threshold1=threshold1, threshold2=threshold2) # Canny Edge Detection
-        
-        return edges
+        self.pf = PF(N=N) 
+        self.counter = 0
     
     def getMapReference(self, nuscMap, worldRef):
-        edges1 = self.getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.9)
-        edges2 = self.getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, layer_names=['drivable_area'],blur_area=(3,3),threshold1=0.5, threshold2=0.9)
-        edges = edges1 & edges2
+        edges1 = getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, patchSize=200, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.7)
+        edges2 = getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, patchSize=200, layer_names=['drivable_area'],blur_area=(3,3),threshold1=0.5, threshold2=0.7)
+        edges = edges1 | edges2
         
-        return edges2
+        return edges #take only borders of drivable area
     
     def getDrivableArea(self, nuscMap, worldRef, layer_names = ['drivable_area'], patch_size=50):
         patch_angle = 0
@@ -326,24 +428,41 @@ class MapMatching:
         
         return mask
 
-    def run(self, extTracks, nuscMap, origWorldRef, worldRef, R, heading, odometry):
+    def run(self, extTracks, nuscMap, origWorldRef, worldRef, origRadarRef, radarRef, R, heading, odometry):
         orig_world_ref = np.array([origWorldRef[0],origWorldRef[1], np.deg2rad(heading-90)])
         world_ref = np.array([worldRef[0],worldRef[1], np.deg2rad(heading-90)])
+        radar_ref = np.array([radarRef[0],radarRef[1], np.deg2rad(heading-90)])
+        #print("radar_ref", radar_ref, "world_ref", world_ref)
         if self.pf.current_odom_xy_theta is None:
             self.pf.initialize_particles(self.N, world_ref)
-        drivable_area = self.getDrivableArea(nuscMap, orig_world_ref)
+        drivable_area = self.getDrivableArea(nuscMap, origRadarRef)
         self.pf.sample_motion_model(world_ref, drivable_area)
-        road_map = self.getMapReference(nuscMap, orig_world_ref)
-        self.pf.eval_sensor_model(world_ref, extTracks, road_map)
+        road_map = self.getMapReference(nuscMap, origRadarRef)
+        self.pf.eval_sensor_model(radar_ref, extTracks, road_map)
         self.best_particle = self.pf.getBestParticle()
         self.pf.resample_particles()
+        
+        #DEBUG
+        self.cost_true = []
+        self.cost_mean = []
+        debug = True if self.counter > 1000 else False
+        for ext_track in extTracks:
+            true_pos_particle = {"x": radar_ref[0], "y": radar_ref[1], "theta": radar_ref[2]}
+            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, radar_ref, road_map, debug=debug)
+            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, radar_ref, road_map, debug=debug)
+            mean_particle = self.pf.getSigmaClipped()
+            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, radar_ref, road_map, debug=debug)
+            #print("cost_gt", cost_true, "cost_best", cost_best, "cost_mean", cost_mean)
+            #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
+            self.cost_true.append(cost_true)
+            self.cost_mean.append(cost_mean)
         
     def getResults(self):
         mean_particle = self.pf.getSigmaClipped()
         best_particle = self.best_particle
         mean_pos = np.array([mean_particle['x'], mean_particle['y']])
         best_pos = np.array([best_particle['x'], best_particle['y']])
-        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta']}
+        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean}
         
         return results
         
