@@ -273,11 +273,16 @@ class PF:
                 R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
                 xy = np.array([particle["x"], particle["y"]])
                 xy_rotated = np.dot(R, xy)
-                sigma_factor = 10 if self.uncertainty_flag else 1
-                sigma_along_track = (sigma_factor * dt / 10) if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else (sigma_factor**2 * dt / 100)
-                error_along_track = np.random.normal(0, sigma_along_track)
+                
+                var_dist, _ = self.getVariance()
+                var_cond = var_dist < 5
+                self.uncertainty_flag = self.uncertainty_flag & var_cond
+                sigma_factor_along_track = 1 if self.uncertainty_flag else 0
+                sigma_factor_cross_track = 0.2
+                sigma_along_track = (dt / 10) if np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) < 0.003 else (dt / 100)
+                error_along_track = np.random.normal(0, sigma_along_track + sigma_factor_along_track)
                 sigma_cross_track = 0
-                error_cross_track = 0
+                error_cross_track = np.random.normal(0, sigma_factor_cross_track) if self.uncertainty_flag else 0
                 xy_rotated_plus_errs = xy_rotated + np.array([error_along_track, error_cross_track])
                 xy_rotated_back = np.dot(np.linalg.inv(R), xy_rotated_plus_errs)
                 particle["x"] = xy_rotated_back[0]
@@ -341,9 +346,7 @@ class PF:
         for particle in self.particles:
             particle['weight'] = particle['weight'] / normalizer
             
-        self.uncertainty_flag = True if (min_cost > 12 and len(extTracks) > 0) else False
-        if self.uncertainty_flag:
-            print("self.uncertainty_flag is True!!!")
+        self.uncertainty_flag = True if (min_cost > 12 and len(extTracks) > 1) else False
 
     def resample_particles(self):
         # Returns a new set of particles obtained by performing
@@ -395,9 +398,26 @@ class PF:
         
         return dist
     
-    def getSigmaClipped(self, nSigma=1.05):
+    def calcDistXY(self, p1, p2):
+        distX = np.linalg.norm(np.array([p1['x']]) - np.array([p2['x']]))
+        distY = np.linalg.norm(np.array([p1['y']]) - np.array([p2['y']]))
+        
+        return np.array([distX,distY])
+    
+    def getVariance(self):
         E = self.getMean(self.particles)
         var_dist = sum([self.calcDist(p, E) for p in self.particles]) / len(self.particles)
+        
+        return var_dist, E
+    
+    def getCovarianceMatrix(self):
+        xy = np.array([[p['x'], p['y']] for p in self.particles]).T
+        cov = np.cov(xy)
+
+        return cov
+    
+    def getSigmaClipped(self, nSigma=1.05):
+        var_dist, E = self.getVariance()
         particles_within_sigma = [p for p in self.particles if (self.calcDist(p, E) <= var_dist * nSigma)]
         E = self.getMean(particles_within_sigma)
         
@@ -435,7 +455,7 @@ class MapMatching:
         #print("radar_ref", radar_ref, "world_ref", world_ref)
         if self.pf.current_odom_xy_theta is None:
             self.pf.initialize_particles(self.N, world_ref)
-        drivable_area = self.getDrivableArea(nuscMap, origRadarRef)
+        drivable_area = self.getDrivableArea(nuscMap, orig_world_ref)
         self.pf.sample_motion_model(world_ref, drivable_area)
         road_map = self.getMapReference(nuscMap, origRadarRef)
         self.pf.eval_sensor_model(radar_ref, extTracks, road_map)
@@ -458,11 +478,12 @@ class MapMatching:
             self.cost_mean.append(cost_mean)
         
     def getResults(self):
+        covariance = self.pf.getCovarianceMatrix()
         mean_particle = self.pf.getSigmaClipped()
         best_particle = self.best_particle
         mean_pos = np.array([mean_particle['x'], mean_particle['y']])
         best_pos = np.array([best_particle['x'], best_particle['y']])
-        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean}
+        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean, "covariance": covariance}
         
         return results
         

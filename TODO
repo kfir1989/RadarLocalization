@@ -1,4 +1,5 @@
-2. greater list of priors
-3. reduce deltaS deltaE to 4 (instead of 8)
-4. Add object tracking
-5. save_state and start from previous point
+1. plot err(s) of :
+a. vehicle speed integration 
+b. IMU acceleration integration
+
+2. conclude

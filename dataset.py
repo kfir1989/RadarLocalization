@@ -96,9 +96,11 @@ class NuscenesDataset(Dataset):
         nusc_can = NuScenesCanBus(dataroot=directory)
         self.imu = []
         self.veh_speed = []
+        self.veh_pose = []
         for ii in range(scene_id, scene_id + 8):
             self.imu = self.imu + nusc_can.get_messages(self.__getSceneName(ii), 'ms_imu')
             self.veh_speed = self.veh_speed + nusc_can.get_messages(self.__getSceneName(ii), 'zoe_veh_info')
+            self.veh_pose = self.veh_pose + nusc_can.get_messages(self.__getSceneName(ii), 'pose')
         #ego_poses = nusc_map_bos.render_egoposes_on_fancy_map(nusc, scene_tokens=[nusc.scene[5]['token']], verbose=False)
         self.rpath = os.path.join(directory, 'sweeps', 'RADAR_FRONT')
         self.cpath = os.path.join(directory, 'sweeps', 'CAM_FRONT')
@@ -128,7 +130,7 @@ class NuscenesDataset(Dataset):
         #z = z[:, [1, 0]]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
         trns,rot = self.getEgoInfo(t, GT=True)
-        trns_imu,_ = self.getEgoInfo(t, GT=False)
+        trns_imu,rot_imu = self.getEgoInfo(t, GT=False)
         zw = self.__getTransformedRadarData(t)[:, 0:2]
         #zw = zw[:, [1, 0]]
         R = rot.rotation_matrix[0:2,0:2] ##not great!
@@ -136,8 +138,10 @@ class NuscenesDataset(Dataset):
         prior = self.__getPrior(t)
         img = self.__getSyncedImage(t)
         heading = 90 + np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
+        R_imu = rot_imu.rotation_matrix[0:2,0:2] ##not great!
+        heading_imu = 90 + np.sign(R_imu[1,0]) * (np.rad2deg(np.arccos(R_imu[0,0])))
         
-        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns, "rot": R, "heading": heading, "pos_imu" : trns_imu, "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
+        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns, "rot": R, "heading": heading, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
 
         return zw, covw, prior, video_data, self.nusc_map
     
@@ -234,31 +238,47 @@ class NuscenesDataset(Dataset):
             eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
             trns = self.ego.iloc[eidx]["translation"]
             rot = Quaternion(self.ego.iloc[eidx]["rotation"])
+            timestamp = self.ego.iloc[eidx]["timestamp"] / 1e6
+            #save vehicle speed
+            veh_speed = np.array([(m['utime'], m['vel']) for m in self.veh_pose])
+            pidx = np.argsort(np.abs(veh_speed[:,0]-ts))[0]
+            self.odometry['speed'] = np.array(veh_speed[pidx,1])
         else:
             #based on IMU and odometry
             rot_imu = np.array([(m['utime'], m['q']) for m in self.imu])
             ridx = np.argsort(np.abs(rot_imu[:,0]-ts))[0]
-            print("ridx", ridx, "rot_imu.shape", rot_imu.shape)
             rot = Quaternion(self.imu[ridx]['q'])
             rot *= self.first_imu_rot.inverse #substract IMU intial offset
             rot *= self.first_gt_rot # add initial GT offset 
 
-            odom_speed = np.array([(m['utime'], m['odom_speed']) for m in self.veh_speed])
-            oidx = np.argsort(np.abs(odom_speed[:,0]-ts))[0]
-            dT = (odom_speed[oidx, 0] - self.veh_speed_ts) / 1e6
-            self.veh_speed_ts = odom_speed[oidx, 0]
-            xnorm = (odom_speed[oidx, 1] / 3.6) * dT
-            x = np.array([xnorm, 0]).T.reshape((2,1))
-            trns = np.dot(rot.rotation_matrix[0:2,0:2], x)
-            trns = self.last_veh_trns + np.array([trns[0][0], trns[1][0], 0]) # add initial GT offset
+            #odometry (zoe vehicle info)
+            wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
+            radius = 0.31#0.305  # Known Zoe wheel radius in meters.
+            circumference = 2 * np.pi * radius
+            wheel_speed[:, 1] *= circumference / 60
+
+            oidx = np.argsort(np.abs(wheel_speed[:,0]-ts))[0]
+            trns = self.last_veh_trns
+            timestamp = wheel_speed[oidx, 0] / 1e6
+            for odomidx in range(self.veh_speed_oidx+1, oidx+1):
+                dT = (wheel_speed[odomidx, 0] - wheel_speed[odomidx-1, 0]) / 1e6
+                #print(f"dT {dT} odomidx {odomidx}")
+                xnorm = wheel_speed[odomidx, 1] * dT
+                x = np.array([xnorm, 0]).T.reshape((2,1))
+                dt_trns = np.dot(rot.rotation_matrix[0:2,0:2], x)
+                trns += np.array([dt_trns[0][0], dt_trns[1][0], 0]) # add initial GT offset
+                #print(f"trns {trns}")
+            self.veh_speed_oidx = oidx
             self.last_veh_trns = trns
+            #save vehicle speed
+            self.odometry['speed'] = wheel_speed[oidx, 1]
             
-        
         self.odometry['r1'] = self.odometry['r2']
         R = rot.rotation_matrix[0:2,0:2] ##not great!
         self.odometry['r2'] = np.sign(R[1,0]) * np.arccos(R[0,0])
         self.odometry['t'] = np.linalg.norm(np.array(trns)-np.array(self.odometry['trns']))
         self.odometry['trns'] = trns
+        self.odometry['timestamp'] = timestamp
         return trns,rot
     
     def getOdometry(self):
@@ -274,13 +294,15 @@ class NuscenesDataset(Dataset):
         ridx = np.argsort(np.abs(rot_imu[:,0]-ts))[0]
         self.first_imu_rot = Quaternion(rot_imu[ridx,1])
         odom_speed = np.array([(m['utime'], m['odom_speed']) for m in self.veh_speed])
+        print("odom_speed",odom_speed)
         oidx = np.argsort(np.abs(odom_speed[:,0]-ts))[0]
-        self.veh_speed_ts = odom_speed[oidx, 0]
+        self.veh_speed_oidx = oidx
         self.last_veh_trns = self.first_gt_trns
         
         R = self.first_imu_rot.rotation_matrix[0:2,0:2]
         self.odometry['r2'] = np.sign(R[1,0]) * np.arccos(R[0,0])
         self.odometry['trns'] = self.first_gt_trns
+        self.odometry['timestamp'] = odom_speed[oidx,0]
         
     def __getPrior(self, i):
         ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar

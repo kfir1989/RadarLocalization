@@ -288,8 +288,8 @@ class Tracker:
                 xi = pnt_track.getStateVector()
                 xmin, xmax = prior["xmin"], prior["xmax"]
                 c = prior["c"]
-                lat_dist_to_prior = xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2
-                if xi[0] >= xmin-20 and xi[0] <= xmax+20 and lat_dist_to_prior < 20:
+                lat_dist_to_prior = abs(xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2)
+                if xi[0] >= xmin-15 and xi[0] <= xmax+15 and lat_dist_to_prior < 15:
                     lat_pi = xi[1]-c[1]*xi[0]-c[2]*xi[0]**2
                     #Pi = pnt_track.getCovarianceMatrix()
                     for j,pnt_track_adv in enumerate(pnt_object_list):
