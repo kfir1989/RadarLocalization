@@ -89,6 +89,7 @@ class NuscenesDataset(Dataset):
         self.nusc = nusc
         scene_id = kwargs.pop('scene_id', 5)
         directory = kwargs.pop('directory')
+        N = kwargs.pop('N', 800)
         scene_name = self.__getSceneName(scene_id)
         map_name = self.__getMapName(scene_name)
         print(r"scene_id={} scene_name={} map_name={}".format(scene_id, scene_name, map_name))
@@ -118,7 +119,7 @@ class NuscenesDataset(Dataset):
         self.first_idx = self.__getFirstIdxOffset(scene_name)
         self.odometry = {'r1':0,'t':0,'r2':0}
         self.__getFirstPosition(self.first_idx)
-        self.ego_path, self.ego_trns = self.__extractEgoPath(800)
+        self.ego_path, self.ego_trns = self.__extractEgoPath(N)
         
     def getData(self, t):
         t += self.first_idx
@@ -309,7 +310,7 @@ class NuscenesDataset(Dataset):
         eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
         trns = self.ego.iloc[eidx]["translation"]
         lanes = []
-        if 1:
+        if 0:
             closest_lane = self.nusc_map.get_closest_lane(trns[0], trns[1], radius=2)
             incoming_lane = self.nusc_map.get_incoming_lane_ids(closest_lane)
             outgoing_lane = self.nusc_map.get_outgoing_lane_ids(closest_lane)
@@ -323,7 +324,7 @@ class NuscenesDataset(Dataset):
                 for olane in self.nusc_map.get_incoming_lane_ids(lane):
                     lanes.append(self.__extractPolynomFromLane(olane))
         else:
-            lane_ids = self.nusc_map.get_records_in_radius(trns[0], trns[1], 2, ['lane', 'lane_connector'])
+            lane_ids = self.nusc_map.get_records_in_radius(trns[0], trns[1], 80, ['lane', 'lane_connector'])
             nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']
             for lane in nearby_lanes:
                 lanes.append(self.__extractPolynomFromLane(lane))

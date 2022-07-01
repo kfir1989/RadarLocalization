@@ -4,6 +4,7 @@ from filterpy.common import Q_discrete_white_noise, Saver
 from numpy.polynomial import polynomial as P
 from utils import *
 import detector
+import scipy
     
 class Tracker:
     def __init__(self):
@@ -149,6 +150,14 @@ class Tracker:
             self.pnt_object_list.append(new_trk)
             
     def trackInitExt(self, polynom, generated_points):
+        #calc arc length: if too short, don't initiate new track
+        integral_expression = np.array([1+polynom["f"].c[1]**2, 4*polynom["f"].c[0]*polynom["f"].c[1], 4*polynom["f"].c[0]**2])
+        f = lambda x:integral_expression[0]+integral_expression[1]*x+integral_expression[2]*x**2
+        curve_length, _ = scipy.integrate.quad(f, polynom["x_start"], polynom["x_end"])
+        #print(f"polynom={polynom['f']} integral_expression={integral_expression} curve_length={curve_length}")
+        if curve_length < 5:
+            print(f"Extended track is too short curve_length={curve_length}")
+            return False
         x = np.array([polynom["f"].c[2], polynom["f"].c[1], polynom["f"].c[0], polynom["x_start"], polynom["x_end"]]).T
         trk_similar_test = True
         if (not trk_similar_test or not self.isTrkSimilar(x)):
@@ -274,7 +283,7 @@ class Tracker:
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])) and lat_distance < 2:
                 #print("inside condition", self.innerProductPolynoms(c0,c1,xleft,xright))
                 if(self.innerProductPolynoms(c0,c1,xleft,xright) > 1):
-                    #print("Tracks are similar! do not open a new trk", c0, c1)
+                    print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
         return False
                 
@@ -289,16 +298,27 @@ class Tracker:
                 xmin, xmax = prior["xmin"], prior["xmax"]
                 c = prior["c"]
                 lat_dist_to_prior = abs(xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2)
-                if xi[0] >= xmin-15 and xi[0] <= xmax+15 and lat_dist_to_prior < 15:
+                if xi[0] >= xmin-5 and xi[0] <= xmax+5 and lat_dist_to_prior < 12:
                     lat_pi = xi[1]-c[1]*xi[0]-c[2]*xi[0]**2
-                    #Pi = pnt_track.getCovarianceMatrix()
-                    for j,pnt_track_adv in enumerate(pnt_object_list):
+                    squared_dist = np.array([np.sqrt((xi[0]-pnt.getStateVector()[0])**2+(xi[1]-pnt.getStateVector()[1])**2) for pnt in pnt_object_list])
+                    candidates_indices = np.argsort(np.squeeze(squared_dist))
+                    group_i = [i]
+                    for j in candidates_indices:
+                        if squared_dist[j] > 60:
+                            break
                         if(i != j):
-                            xpj = pnt_track_adv.getStateVector()
-                            xpi = [xi[0], lat_pi + c[1] * xpj[0] + c[2] * xpj[0]**2]
-                            Pj = pnt_track_adv.getCovarianceMatrix()
-                            #P[i,j] = ext_data_associator.calcLikelihood(xpi, xpj, Pi)
-                            P[i,j] = ext_data_associator.calcLikelihood(xpi, xpj, Pj)
+                            xpj = pnt_object_list[j].getStateVector()
+                            kk = np.argmin(np.array([abs(xpj[0]-pnt_object_list[k].getStateVector()[0]) for k in group_i]))
+                            k = group_i[kk]
+                            xpk = pnt_object_list[k].getStateVector()
+                            if np.sqrt((xpk[0]-xpj[0])**2+(xpk[1]-xpj[1])**2) < 4:
+                                xpi = [xpk[0], lat_pi + c[1] * xpj[0] + c[2] * xpj[0]**2]
+                                Pj = pnt_object_list[j].getCovarianceMatrix()
+                                P[i,j] = ext_data_associator.calcLikelihood(xpi, xpj, Pj)
+                                if P[i,j]:
+                                    group_i.append(j)
+                            #else:
+                                #print(f"xpk={xpk} xpj={xpj}")
                         else:
                             P[i,j] = 1
                 else:

@@ -1,5 +1,10 @@
-1. plot err(s) of :
-a. vehicle speed integration 
-b. IMU acceleration integration
-
-2. conclude
+1. explore point cloud (fields: doppler? velocity?)
+2. run DBSCAN on dynamic points
+3. Plot clusters on map along time 
+4. Build DynamicTracker: 
+	a. 2nd order motion model: estimate position and velocity 
+	b. DataAssociation: gating + statistical distance (using velocity)
+	c. track update
+	d. new track initiation (similarity test)
+	e. confirmation
+	f. for each track save history of positions and velocities

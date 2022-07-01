@@ -560,9 +560,10 @@ class PFVideo:
             y_min = np.min(ego_path[:,1])
             y_max = np.max(ego_path[:,1])
             y_mean = 0.5*(y_min+y_max)
+            patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
 
             self.first_pos = [x_mean, y_mean]
-            self.patch_size = 500
+            self.patch_size = patch_size
             edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
             self.map = edges
 
@@ -812,9 +813,10 @@ class PFXYVideo:
             y_min = np.min(ego_path[:,1])
             y_max = np.max(ego_path[:,1])
             y_mean = 0.5*(y_min+y_max)
+            patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
 
             self.first_pos = [x_mean, y_mean]
-            self.patch_size = 500
+            self.patch_size = patch_size
             edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
 
             self.ax[0,2].imshow(edges, origin='lower')

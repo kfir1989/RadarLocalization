@@ -58,8 +58,8 @@ class ExtObjectDataAssociator():
 class Pnts2ExtObjectDataAssociator():
     def __init__(self, dim=1,deltaL=1):
         self.deltaL = deltaL
-        self.deltaS = 8 # delta x start
-        self.deltaE = 8 # delta x end
+        self.deltaS = 4 # delta x start
+        self.deltaE = 4 # delta x end
         self.dim = dim #rank
         
     def gating(self, xi, xj, Pi):
