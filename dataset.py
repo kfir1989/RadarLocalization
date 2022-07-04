@@ -153,6 +153,16 @@ class NuscenesDataset(Dataset):
         
         pc.points = pc.points[:, pc.points[3,:]==1]
         return pc.points.T
+    
+    def getDynamicPoints(self, t):
+        t += self.first_idx
+        f = os.path.join(self.rpath, self.radar_files[t])
+        pc = RadarPointCloud.from_file(f)
+        pc = self.__sensor2World(t, pc)
+        pc = pc.points.T
+        pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
+        ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
+        return pc, ts
         
     def __extractPolynomFromLane(self, lane):
         lane_record = self.nusc_map.get_arcline_path(lane)

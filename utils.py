@@ -7,12 +7,13 @@ import math
 from numpy.polynomial import polynomial as P
 
 class PointObjectDataAssociator():
-    def __init__(self, delta=1):
+    def __init__(self, dim=2, delta=1):
         self.delta = delta
-        self.dim = 2 #rank
+        self.dim = dim #rank
         
     def distance(self, x, u, P):
         try:
+            #print("distance=", np.dot(np.dot((x-u).T,np.linalg.inv(P)),(x-u)))
             return np.dot(np.dot((x-u).T,np.linalg.inv(P)),(x-u))
         except:
             print("OOps! x = ", x, "u = ", u, " P = ", P)
