@@ -161,6 +161,13 @@ class NuscenesDataset(Dataset):
         pc = self.__sensor2World(t, pc)
         pc = pc.points.T
         pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
+        trns,rot = self.getEgoInfo(t, GT=True)
+        R = rot.rotation_matrix[0:2,0:2] ##not great!
+        ego_speed = self.odometry['speed']
+        #ego motion compensation + world coordinates
+        v = pc[:,6:8]
+        v_comp = np.transpose(np.dot(R, v.T)) + ego_speed[0:2]
+        pc[:,8:10] = v_comp
         ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
         return pc, ts
         
