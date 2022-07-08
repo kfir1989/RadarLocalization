@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from filterpy.kalman import KalmanFilter
+from filterpy.kalman import ExtendedKalmanFilter
 from filterpy.common import Q_discrete_white_noise, Saver
 import random
 import math
@@ -25,7 +26,8 @@ class PointObjectDataAssociator():
     def calcLikelihood(self, z, z_prior, innov_cov):
         if self.gating(z, z_prior, innov_cov):
             det = np.linalg.det(innov_cov)
-            l = np.power((2*np.pi), -0.5*self.dim) * np.power(det, -0.5) * np.exp(-0.5 * self.distance(z, z_prior, innov_cov)) 
+            dist = self.distance(z, z_prior, innov_cov)
+            l = np.power((2*np.pi), -0.5*self.dim) * np.power(det, -0.5) * np.exp(-0.5 * dist) 
         else:
             l = 0
         

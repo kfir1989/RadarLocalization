@@ -163,13 +163,14 @@ class NuscenesDataset(Dataset):
         pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
         trns,rot = self.getEgoInfo(t, GT=True)
         R = rot.rotation_matrix[0:2,0:2] ##not great!
+        heading = 90 + np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
         ego_speed = self.odometry['speed']
         #ego motion compensation + world coordinates
         v = pc[:,6:8]
         v_comp = np.transpose(np.dot(R, v.T)) + ego_speed[0:2]
         pc[:,8:10] = v_comp
         ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
-        return pc, ts
+        return pc, ts, heading
         
     def __extractPolynomFromLane(self, lane):
         lane_record = self.nusc_map.get_arcline_path(lane)
