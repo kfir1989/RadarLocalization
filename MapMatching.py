@@ -449,6 +449,8 @@ class MapMatching:
             #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
             self.cost_true.append(cost_true)
             self.cost_mean.append(cost_mean)
+
+        return self.getResults()
         
     def getResults(self):
         covariance = self.pf.getCovarianceMatrix()

@@ -6,7 +6,7 @@ from utils import *
 import detector
 import scipy
     
-class Tracker:
+class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
         self.ext_data_associator = ExtObjectDataAssociator()
