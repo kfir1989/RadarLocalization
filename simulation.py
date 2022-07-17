@@ -1,6 +1,6 @@
 from dataset import *
 from video import SimulationVideo
-from video import NuscenesVideo, NuscenesVideoDebug, PFVideo, PFXYVideo
+from video import NuscenesVideo, NuscenesVideoDebug, PFVideo, PFXYVideo, DynamicTrackerVideo
 
 class Simulation():
     def __init__(self, model, **kwargs):
@@ -35,10 +35,11 @@ class NuscenesSimulation():
         self.video_debug = NuscenesVideoDebug(history=True, scene=scene_id)
         self.video_pf = PFVideo(history=True, scene=scene_id, N=self.nmax)
         self.video_pf_xy = PFXYVideo(history=True, scene=scene_id, N=self.nmax)
+        self.video_dynamic_tracker = DynamicTrackerVideo(history=True, scene=scene_id, N=self.nmax)
         self.lane = None
         self.scene = scene_id
     
-    def drawPlots(self, t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=False):
+    def drawPlots(self, t, video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=False):
         if self.video_list["video"]:
             self.video.save(t,video_data, polynoms, nusc_map, video_with_priors=video_with_priors)
             if generate_video:
@@ -53,6 +54,8 @@ class NuscenesSimulation():
                 self.video_pf.generate(name=f"video\scene{self.scene}_pf.avi", fps=5)
         if self.mm and self.video_list['video_pf_xy']:
             self.video_pf_xy.save(t,video_data, mm_results, polynoms, nusc_map)
+        if self.video_list["dynamic_tracker"]:
+            self.video_dynamic_tracker.save(t, dynamic_tracks,dynamic_clusters, video_data, nusc_map)
     
     def run(self,start, N, generate_video=False, video_with_priors=False, debug=False, translate=True):
         start_idx = start
@@ -60,10 +63,10 @@ class NuscenesSimulation():
         for t in range(start_idx,start_idx + N):
             print(f"frame {t}")
             #get data
-            zw, covw, prior, video_data, nusc_map = self.dataset.getData(t)
+            zw, covw, prior, dw, video_data, nusc_map = self.dataset.getData(t)
             translation = np.array(video_data["ego_path"][0])[0:2]
             #run model
-            points, polynoms, debug_info, mm_results = self.model.run({"zw":zw, "covw":covw}, video_data, prior, translation, nusc_map)
+            points, polynoms, dynamic_tracks, dynamic_clusters, debug_info, mm_results = self.model.run({"zw":zw, "covw":covw}, {"dw":dw}, video_data, prior, translation, nusc_map)
             #Draw plots
-            self.drawPlots(t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=generate_video)
+            self.drawPlots(t, video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=generate_video)
             

@@ -128,6 +128,7 @@ class NuscenesDataset(Dataset):
         z = self.__getRadarSweep(t)[:,0:2]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
         trns_gt,rot_gt = self.getEgoInfo(t, GT=True)
+        veh_speed = self.odometry["speed"]
         R_gt = rot_gt.rotation_matrix[0:2,0:2] ##not great!
         trns_imu,rot_imu = self.getEgoInfo(t, GT=False)
         R_imu = rot_imu.rotation_matrix[0:2,0:2] ##not great!
@@ -138,19 +139,22 @@ class NuscenesDataset(Dataset):
                 
         pc = self.__getTransformedRadarData(t,trns,rot)
         static_data = pc[:, pc[3,:]==1].T
-        dynamic_data = pc[:, np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6)].T
+        #dynamic_data = pc[:, np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6)].T
+        pc = pc.T
+        dw = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
         zw = static_data[:,0:2]
-        dw = np.squeeze(dynamic_data,axis=1)
+        #dw = np.squeeze(dynamic_data,axis=1)
         covw = np.matmul(np.matmul(R, cov), R.T)
         
         prior = self.__getPrior(t)
         img = self.__getSyncedImage(t)
+        ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
         heading_gt = 90 + np.sign(R_gt[1,0]) * (np.rad2deg(np.arccos(R_gt[0,0])))
         heading_imu = 90 + np.sign(R_imu[1,0]) * (np.rad2deg(np.arccos(R_imu[0,0])))
         
-        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns_gt, "rot": R_gt, "heading": heading_gt, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
+        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns_gt, "rot": R_gt, "heading": heading_gt, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns, "veh_speed": veh_speed, "timestamp": ts}
 
-        return zw, covw, prior, video_data, self.nusc_map
+        return zw, covw, prior, dw, video_data, self.nusc_map
     
     def __getTransformedRadarData(self, t, trns, rot):
         f = os.path.join(self.rpath, self.radar_files[t])
@@ -161,12 +165,10 @@ class NuscenesDataset(Dataset):
     
     def getDynamicPoints(self, t):
         t += self.first_idx
-        f = os.path.join(self.rpath, self.radar_files[t])
-        pc = RadarPointCloud.from_file(f)
-        pc = self.__sensor2World(t, pc)
-        pc = pc.points.T
-        pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
         trns,rot = self.getEgoInfo(t, GT=True)
+        pc = self.__getTransformedRadarData(t, trns, rot)
+        pc = pc.T
+        pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
         R = rot.rotation_matrix[0:2,0:2] ##not great!
         heading = np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
         ego_speed = self.odometry['speed']
@@ -290,7 +292,7 @@ class NuscenesDataset(Dataset):
         self.odometry['t'] = np.linalg.norm(np.array(trns)-np.array(self.odometry['trns']))
         self.odometry['trns'] = trns
         self.odometry['timestamp'] = timestamp
-        return trns,rot
+        return np.array(trns),rot
     
     def getOdometry(self):
         return self.odometry

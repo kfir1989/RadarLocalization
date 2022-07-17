@@ -862,3 +862,148 @@ class PFXYVideo:
         
         cv2.destroyAllWindows()
         video.release()
+        
+
+class DynamicTrackerVideo:
+    def __init__(self, scene=5, history=False, N=800):
+        self.fig, self.ax = plt.subplots(1,2,figsize=(30,14))
+        self.x_lim_min = 1e6
+        self.x_lim_max = 1e-6
+        self.y_lim_min = 1e6
+        self.y_lim_max = 1e-6
+        
+        self.prior_x_lim_min = 1e6
+        self.prior_x_lim_max = -1e6
+        self.prior_y_lim_min = 1e6
+        self.prior_y_lim_max = -1e6
+        
+        self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
+                      "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
+        self.dir_name = f"images/{scene}/dynamic_tracker_images"
+        os.system("mkdir -p " + self.dir_name)
+        self.history = history
+        self.counter = 0
+        self.scene = scene
+        
+        nanArray = np.ones((N,3))
+        nanArray[:,:] = np.nan
+
+        self.ax[0].set_title(f"Dynamic detections for scene = {self.scene}", fontsize=20)
+        self.ax[0].set(xlabel='x [m]', ylabel='y [m]')
+        
+    def drawMap(self, ax, nusc_map, ego_path):
+        x_min = np.min(ego_path[:,0])
+        x_max = np.max(ego_path[:,0])
+        x_mean = 0.5*(x_min+x_max)
+        y_min = np.min(ego_path[:,1])
+        y_max = np.max(ego_path[:,1])
+        y_mean = 0.5*(y_min+y_max)
+        patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 300
+
+        first_pos = [x_mean, y_mean]
+        patch_size = patch_size
+        edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
+
+        ax.imshow(edges, origin='lower')
+        ax.grid(False)
+        #ax.set_xlim([patch_size/2 - (x_mean-x_min) - 100,patch_size/2 + (x_max-x_mean) + 100])
+        #ax.set_ylim([patch_size/2 - (y_mean-y_min) - 100,patch_size/2 + (y_max-y_mean) + 100])
+
+        x_offset = -first_pos[0]+patch_size*0.5
+        y_offset = -first_pos[1]+patch_size*0.5
+        return x_offset, y_offset
+    
+    def drawTrack(self, ax, trk, x_offset=0, y_offset=0, velThr=2):
+        if trk.confirmed:
+            hstate, hego, hspeed = trk.getHistory()
+            history_len = hstate.shape[0]
+            if trk.hits > 10:
+            #rotate translate each state according to hego
+                tstate = np.zeros((hstate.shape[0], 2, 1))
+                tspeed = np.zeros((hstate.shape[0], 2, 1))
+                for i, (state, ego, speed) in enumerate(zip(hstate, hego, hspeed)):
+                    R = np.array([[np.cos(ego["heading"]), -np.sin(ego["heading"])], [np.sin(ego["heading"]), np.cos(ego["heading"])]])
+                    tstate[i, :, :] = np.dot(R, state[0:2]) + ego["T"][0:2].reshape(-1,1)
+                    tspeed[i, :, :] = np.dot(R, state[2:4]) + np.dot(R, speed[0:2].reshape(-1,1))
+                abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
+                print(f"abs_vel ={abs_vel}")
+                if abs_vel < velThr:
+                    return
+
+                ax.plot(tstate[:,0]+x_offset, tstate[:,1]+y_offset, color='red',label='track')
+                dx = tstate[int(history_len / 2) + 1,0]-tstate[int(history_len / 2) - 1,0]
+                dy = tstate[int(history_len / 2) + 1,1]-tstate[int(history_len / 2) - 1,1]
+                ax.arrow(np.mean(tstate[:,0]+x_offset), np.mean(tstate[:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
+
+    def drawDetections(self, ax, Z, X):
+        for z,x in zip(Z,X):
+            vr = z[2]
+            x_com = x[0]
+            y_com = x[1]
+            v_towards = 0 if vr > 0 else 1
+            ax.scatter(x_com, y_com, s=10, c=self.colors[v_towards])
+        
+    def save(self, idx, tracks, clusters, video_data, nusc_map):
+        gt_pos = np.array(video_data['pos'])
+        gt_heading = np.deg2rad(video_data['heading'])
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        Z = clusters["Z"]
+        X = clusters["X"]
+        
+        self.x_lim_min = min(video_data["ego_path"][0]-100)
+        self.x_lim_max = max(video_data["ego_path"][0]+100)
+        self.y_lim_min = min(video_data["ego_path"][1]-100)
+        self.y_lim_max = max(video_data["ego_path"][1]+100)
+        
+        xlim = [self.x_lim_min,self.x_lim_max]
+        ylim = [self.y_lim_min,self.y_lim_max]
+        
+
+        if self.counter == 0:
+            self.ax[0].plot(ego_path[:,0], ego_path[:,1],label='Ego')
+        self.drawDetections(self.ax[0], Z, X)
+        if self.counter == 0:
+            self.ax[0].legend(['Ego', 'incoming','outgoing'],loc="upper right")
+            leg = self.ax[0].get_legend()
+            try:
+                leg.legendHandles[1].set_color('orange')
+            except:
+                pass
+            try:
+                leg.legendHandles[2].set_color('blue')
+            except:
+                pass
+        
+        if 1:#self.counter == 0:
+            self.x_offset, self.y_offset = self.drawMap(self.ax[1], nusc_map, ego_path)
+            self.ax[1].plot(ego_path[:,0]+self.x_offset, ego_path[:,1]+self.y_offset,label='Ego')
+
+        for trk in tracks:
+            self.drawTrack(self.ax[1], trk, x_offset=self.x_offset, y_offset=self.y_offset, velThr=2)
+            
+        self.ax[1].set_title(f"Dynamic tracks for scene = {self.scene}", fontsize=20)
+        self.ax[1].set(xlabel='x [m]', ylabel='y [m]')
+        self.ax[1].legend(loc="upper right")
+        
+        self.counter += 1
+
+        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
+        
+        self.ax[1].clear()
+        
+    def generate(self, name, fps=1):
+        filenames = [f for f in os.listdir(self.dir_name) if os.path.isfile(os.path.join(self.dir_name, f))]
+        filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+        
+        frame = cv2.imread(os.path.join(self.dir_name, filenames[0]))
+        height, width, layers = frame.shape
+        video = cv2.VideoWriter(name, fourcc=cv2.VideoWriter_fourcc('M','J','P','G'), frameSize=(width,height),fps=fps)
+        
+        for filename in filenames:
+            #print(filename)
+            video.write(cv2.imread(os.path.join(self.dir_name, filename)))
+        
+        cv2.destroyAllWindows()
+        video.release()

@@ -296,7 +296,7 @@ class DynamicTracker:
     def trackInit(self, Z, ego, ego_speed):
         for z in Z:
             new_trk = DynamicObjectTrack(z=z, create_frame_idx=self.frame_idx, ego=ego, ego_speed=ego_speed)
-            print(f"Initiating new track: x={new_trk.kf.x} for measurement z={z}")
+            #print(f"Initiating new track: x={new_trk.kf.x} for measurement z={z}")
             self.dyn_object_list.append(new_trk)
 
             
