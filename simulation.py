@@ -38,13 +38,13 @@ class NuscenesSimulation():
         self.lane = None
         self.scene = scene_id
     
-    def drawPlots(self, t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, generate_video=False):
+    def drawPlots(self, t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=False):
         if self.video_list["video"]:
             self.video.save(t,video_data, polynoms, nusc_map, video_with_priors=video_with_priors)
             if generate_video:
                 self.video.generate(name=f"video\scene{self.scene}.avi", fps=5)
         if self.video_list["video_debug"]:
-            self.video_debug.save(t,video_data, polynoms,points, nusc_map, self.static_tracker.getDebugInfo(), video_with_priors=video_with_priors)
+            self.video_debug.save(t,video_data, polynoms,points, nusc_map, debug_info, video_with_priors=video_with_priors)
             if generate_video:
                 self.video_debug.generate(name=f"video\scene{self.scene}_debug.avi", fps=5)
         if self.mm and self.video_list['video_pf']:
@@ -63,7 +63,7 @@ class NuscenesSimulation():
             zw, covw, prior, video_data, nusc_map = self.dataset.getData(t)
             translation = np.array(video_data["ego_path"][0])[0:2]
             #run model
-            points, polynoms, mm_results = self.model.run({"zw":zw, "covw":covw}, video_data, prior, translation, nusc_map)
+            points, polynoms, debug_info, mm_results = self.model.run({"zw":zw, "covw":covw}, video_data, prior, translation, nusc_map)
             #Draw plots
-            self.drawPlots(t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, generate_video=generate_video)
+            self.drawPlots(t, video_data, polynoms, points, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=generate_video)
             

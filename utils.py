@@ -177,3 +177,11 @@ class ExtendedObjectTrack:
     
     def getLastUpdateFrameIdx(self):
         return self.last_update_frame_idx
+    
+    def getElements(self):
+        state = self.getStateVector()
+        x_elements = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*10))
+        y_elements = state[0] + state[1] * x_elements + state[2] * x_elements**2
+        elements = np.array([x_elements, y_elements]).T
+        
+        return elements

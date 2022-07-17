@@ -121,38 +121,43 @@ class NuscenesDataset(Dataset):
         self.__getFirstPosition(self.first_idx)
         self.ego_path, self.ego_trns = self.__extractEgoPath(N)
         
-    def getData(self, t):
+    def getData(self, t, GT=False):
         t += self.first_idx
-        #dR = 0.4
         dR = 0.4
-        #dAz = 0.05
         dAz = 0.04
         z = self.__getRadarSweep(t)[:,0:2]
-        #z = z[:, [1, 0]]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
-        trns,rot = self.getEgoInfo(t, GT=True)
+        trns_gt,rot_gt = self.getEgoInfo(t, GT=True)
+        R_gt = rot_gt.rotation_matrix[0:2,0:2] ##not great!
         trns_imu,rot_imu = self.getEgoInfo(t, GT=False)
-        zw = self.__getTransformedRadarData(t)[:, 0:2]
-        #zw = zw[:, [1, 0]]
-        R = rot.rotation_matrix[0:2,0:2] ##not great!
+        R_imu = rot_imu.rotation_matrix[0:2,0:2] ##not great!
+        if GT:
+            trns,rot,R = trns_gt, rot_gt, R_gt
+        else:
+            trns,rot,R = trns_imu, rot_imu, R_imu
+                
+        pc = self.__getTransformedRadarData(t,trns,rot)
+        static_data = pc[:, pc[3,:]==1].T
+        dynamic_data = pc[:, np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6)].T
+        zw = static_data[:,0:2]
+        dw = np.squeeze(dynamic_data,axis=1)
         covw = np.matmul(np.matmul(R, cov), R.T)
+        
         prior = self.__getPrior(t)
         img = self.__getSyncedImage(t)
-        heading = 90 + np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
-        R_imu = rot_imu.rotation_matrix[0:2,0:2] ##not great!
+        heading_gt = 90 + np.sign(R_gt[1,0]) * (np.rad2deg(np.arccos(R_gt[0,0])))
         heading_imu = 90 + np.sign(R_imu[1,0]) * (np.rad2deg(np.arccos(R_imu[0,0])))
         
-        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns, "rot": R, "heading": heading, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
+        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns_gt, "rot": R_gt, "heading": heading_gt, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns}
 
         return zw, covw, prior, video_data, self.nusc_map
     
-    def __getTransformedRadarData(self, t):
+    def __getTransformedRadarData(self, t, trns, rot):
         f = os.path.join(self.rpath, self.radar_files[t])
         pc = RadarPointCloud.from_file(f)
-        pc = self.__sensor2World(t, pc)
+        pc = self.__sensor2World(t, pc, trns, rot)
         
-        pc.points = pc.points[:, pc.points[3,:]==1]
-        return pc.points.T
+        return pc.points
     
     def getDynamicPoints(self, t):
         t += self.first_idx
@@ -164,12 +169,7 @@ class NuscenesDataset(Dataset):
         trns,rot = self.getEgoInfo(t, GT=True)
         R = rot.rotation_matrix[0:2,0:2] ##not great!
         heading = np.sign(R[1,0]) * (np.rad2deg(np.arccos(R[0,0])))
-        #ego_speed = np.dot(R, self.odometry['speed'][0:2])
         ego_speed = self.odometry['speed']
-        #ego motion compensation + world coordinates
-        #v = pc[:,6:8]
-        #v_comp = np.transpose(np.dot(R, v.T)) + ego_speed[0:2]
-        #pc[:,8:10] = v_comp
         ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
         return pc, ts, heading, ego_speed
         
@@ -187,17 +187,8 @@ class NuscenesDataset(Dataset):
         pc.translate(np.array(self.cs_record['translation']))
         
         return pc
-    
-    def __sensor2WorldCoordinates(self, idx, pc):
-        # Stage1: Sensor -> Ego
-        pc = self.__sensor2EgoCoordinates(pc)
-        # Stage2: Ego -> World
-        trns,rot = self.getEgoInfo(idx)
-        pc.rotate(rot.rotation_matrix)
-        pc.translate(np.array(trns))
         
-    def __sensor2World(self, idx, pc):
-        trns,rot = self.getEgoInfo(idx)
+    def __sensor2World(self, idx, pc, trns, rot):
         car_from_sensor = transform_matrix(self.cs_record['translation'], Quaternion(self.cs_record['rotation']), inverse=False)
         rotate_by_180 = transform_matrix([0,0,0], Quaternion([0, 0, 1, 0]), inverse=False)
         global_from_car = transform_matrix(trns, rot, inverse=False)

@@ -282,14 +282,14 @@ class StaticTracker:
             #print("overlap", overlap, "trk width", x_trk[4]-x_trk[3], "cand_trk_width", x_cand[4]-x_cand[3], "lat_distance", lat_distance, "c0", c0, "c1", c1)
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])) and lat_distance < 2:
                 #print("inside condition", self.innerProductPolynoms(c0,c1,xleft,xright))
-                if(self.innerProductPolynoms(c0,c1,xleft,xright) > 1):
+                if(self.innerProductPolynoms(c0,c1,xleft,xright) > 0.5):
                     print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
         return False
                 
     @staticmethod
     def createProbabilityMatrixExt(pnt_object_list, prior):
-        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1)
+        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1.5)
         #print("createProbabilityMatrixExt for prior", prior)
         if pnt_object_list:
             P = np.zeros((len(pnt_object_list),len(pnt_object_list)))

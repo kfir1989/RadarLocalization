@@ -179,10 +179,8 @@ class PF:
         height, width = roadMap.shape[:2]
         map_center = (width/2, height/2)
         weight = self.calcTrkWeight(ext_track)
-        state = ext_track.getStateVector()
-        x_polynom = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*10))
-        y_polynom = state[0] + state[1] * x_polynom + state[2] * x_polynom**2
-        polynom = np.array([x_polynom, y_polynom]).T
+        polynom = ext_track.getElements()
+        curve = ext_track.getStateVector()[2]
         transformed_polynom = self.transformPolynom(polynom, worldRef, particle)
         #print(transformed_polynom.shape)
         world_xs,world_xe,world_ys,world_ye = transformed_polynom[0,0], transformed_polynom[-1,0], transformed_polynom[0,1], transformed_polynom[-1,1]
@@ -194,7 +192,7 @@ class PF:
         (row,col) = np.where(roadMap[map_ys:map_ye,map_xs:map_xe])
         if row.shape[0] > 0:
             boundary_points = self.map2World(np.array([col+map_xs, row+map_ys]).astype('float64'), worldRef, map_center)
-            cost = self.computeDist(polynom=transformed_polynom, boundaryPoints=boundary_points.T, heading=worldRef[2], curve=state[2],debug=debug)
+            cost = self.computeDist(polynom=transformed_polynom, boundaryPoints=boundary_points.T, heading=worldRef[2], curve=curve,debug=debug)
             #combine (independent) measurements
             cost *= weight
         else:
@@ -420,44 +418,46 @@ class MapMatching:
         
         return mask
 
-    def run(self, extTracks, nuscMap, origWorldRef, worldRef, origRadarRef, radarRef, R, heading, odometry):
-        orig_world_ref = np.array([origWorldRef[0],origWorldRef[1], np.deg2rad(heading-90)])
-        world_ref = np.array([worldRef[0],worldRef[1], np.deg2rad(heading-90)])
-        radar_ref = np.array([radarRef[0],radarRef[1], np.deg2rad(heading-90)])
-        #print("radar_ref", radar_ref, "world_ref", world_ref)
+    def run(self, extTracks, nuscMap, firstWorldRef, IMURelativeRef):
+        try:
+            last_output = np.array([self.output_position['x'], self.output_position['y']])
+        except:
+            last_output = IMURelativeRef[0:2]
+
         if self.pf.current_odom_xy_theta is None:
-            self.pf.initialize_particles(self.N, world_ref)
-        drivable_area = self.getDrivableArea(nuscMap, orig_world_ref)
-        self.pf.sample_motion_model(world_ref, drivable_area)
+            self.pf.initialize_particles(self.N, IMURelativeRef)
+        print("last_output", last_output)
+        drivable_area = self.getDrivableArea(nuscMap, firstWorldRef + last_output)
+        self.pf.sample_motion_model(IMURelativeRef, drivable_area)
         #road_map = self.getMapReference(nuscMap, origRadarRef)
-        road_map = getCombinedMap(nuscMap, origRadarRef, patchSize=300)
-        self.pf.eval_sensor_model(radar_ref, extTracks, road_map)
+        self.road_map = getCombinedMap(nuscMap, firstWorldRef + last_output, patchSize=300)
+        self.pf.eval_sensor_model(IMURelativeRef, extTracks, self.road_map)
         self.best_particle = self.pf.getBestParticle()
         self.pf.resample_particles()
+        
+    def getResults(self, extTracks, gtRelativeRef):
+        covariance = self.pf.getCovarianceMatrix()
+        mean_particle = self.pf.getSigmaClipped()
+        self.output_position = mean_particle
+        best_particle = self.best_particle
+        mean_pos = np.array([mean_particle['x'], mean_particle['y']])
+        best_pos = np.array([best_particle['x'], best_particle['y']])
         
         #DEBUG
         self.cost_true = []
         self.cost_mean = []
         debug = True if self.counter > 1000 else False
         for ext_track in extTracks:
-            true_pos_particle = {"x": radar_ref[0], "y": radar_ref[1], "theta": radar_ref[2]}
-            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, radar_ref, road_map, debug=debug)
-            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, radar_ref, road_map, debug=debug)
+            true_pos_particle = {"x": gtRelativeRef[0], "y": gtRelativeRef[1], "theta": gtRelativeRef[2]}
+            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, gtRelativeRef, self.road_map, debug=debug)
+            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, gtRelativeRef, self.road_map, debug=debug)
             mean_particle = self.pf.getSigmaClipped()
-            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, radar_ref, road_map, debug=debug)
+            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, gtRelativeRef, self.road_map, debug=debug)
             #print("cost_gt", cost_true, "cost_best", cost_best, "cost_mean", cost_mean)
             #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
             self.cost_true.append(cost_true)
             self.cost_mean.append(cost_mean)
-
-        return self.getResults()
         
-    def getResults(self):
-        covariance = self.pf.getCovarianceMatrix()
-        mean_particle = self.pf.getSigmaClipped()
-        best_particle = self.best_particle
-        mean_pos = np.array([mean_particle['x'], mean_particle['y']])
-        best_pos = np.array([best_particle['x'], best_particle['y']])
         results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean, "covariance": covariance}
         
         return results
