@@ -19,6 +19,7 @@ class ClassicDBSCAN:
 
     @staticmethod
     def _calcClusterProperiesArray(ci, ego, heading):
+        r_bias = 1
         x_com = np.mean(ci[:,0])
         y_com = np.mean(ci[:,1])
         dx = x_com-ego[0]
@@ -65,7 +66,7 @@ class ClassicDBSCAN:
         X_list = []
 
         if pc.shape[0] < 1:
-            return X_list, P_list
+            return Z_list, X_list
         clus = DBSCAN(eps=self.eps, min_samples=self.min_samples).fit(pc[:,0:2+6:8])
         c = clus.labels_
         n_clusters = np.unique(c)
@@ -214,6 +215,20 @@ class DynamicObjectTrack:
     def getLastUpdateFrameIdx(self):
         return self.last_update_frame_idx
     
+    def getTranslatedState(self):
+        hstate, hego, hspeed = self.getHistory()
+        history_len = hstate.shape[0]
+        #rotate translate each state according to hego
+        tstate = np.zeros((hstate.shape[0], 2, 1))
+        tspeed = np.zeros((hstate.shape[0], 2, 1))
+        for i, (state, ego, speed) in enumerate(zip(hstate, hego, hspeed)):
+            R = np.array([[np.cos(ego["heading"]), -np.sin(ego["heading"])], [np.sin(ego["heading"]), np.cos(ego["heading"])]])
+            tstate[i, :, :] = np.dot(R, state[0:2]) + ego["T"][0:2].reshape(-1,1)
+            tspeed[i, :, :] = np.dot(R, state[2:4]) + np.dot(R, speed[0:2].reshape(-1,1))
+        #abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
+        
+        return tstate, tspeed
+    
 
 class DynamicTracker:
     def __init__(self):
@@ -311,7 +326,7 @@ class DynamicTracker:
         dyn_delete_list = []
         for i_trk,trk in enumerate(self.dyn_object_list):
             trk.save()
-            print(f"trk.kf.x = {trk.kf.x} age = {trk.age} hits = {trk.hits}")
+            #print(f"trk.kf.x = {trk.kf.x} age = {trk.age} hits = {trk.hits}")
             if trk.age > 10 and (float(trk.hits) / trk.age) > 0.5:
                 trk.confirmed = True
             if self.frame_idx - trk.getLastUpdateFrameIdx() > self.dyn_max_non_update_iterations:

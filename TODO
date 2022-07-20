@@ -1,10 +1,19 @@
-1. explore point cloud (fields: doppler? velocity?)
-2. run DBSCAN on dynamic points
-3. Plot clusters on map along time 
-4. Build DynamicTracker: 
-	a. 2nd order motion model: estimate position and velocity 
-	b. DataAssociation: gating + statistical distance (using velocity)
-	c. track update
-	d. new track initiation (similarity test)
-	e. confirmation
-	f. for each track save history of positions and velocities
+Tuesday:
+
+1. similar to static - plot a cost function graph for dynamic tracks.
+2. enlarge noise on angle (PF)
+3. run and see results
+4. try to enlarge uncertainty when avg(log cost) is too high
+
+Methods:
+1. polynom tracking: 
+- Explain motiviation behind using KF framework for polynoms
+- write some equations and add: static simulation results (different measurement noises, different noise on prior)
+- Add dynamic simulation results with noise on rotation translation at each step (no noise on prior)
+- Add contribution: several priors, similarity check and show simulation the supports that
+
+2. EKF for dynamic tracks + clustering: explain briefly and give some equations
+
+3. Map-matching: particle filter with different noise on translation-rotation, explain cost function and give psuedo algorithm.
+
+Results:

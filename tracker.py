@@ -298,7 +298,7 @@ class StaticTracker:
                 xmin, xmax = prior["xmin"], prior["xmax"]
                 c = prior["c"]
                 lat_dist_to_prior = abs(xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2)
-                if xi[0] >= xmin-5 and xi[0] <= xmax+5 and lat_dist_to_prior < 12:
+                if xi[0] >= xmin-8 and xi[0] <= xmax+8 and lat_dist_to_prior < 12:
                     lat_pi = xi[1]-c[1]*xi[0]-c[2]*xi[0]**2
                     squared_dist = np.array([np.sqrt((xi[0]-pnt.getStateVector()[0])**2+(xi[1]-pnt.getStateVector()[1])**2) for pnt in pnt_object_list])
                     candidates_indices = np.argsort(np.squeeze(squared_dist))

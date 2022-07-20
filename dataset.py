@@ -180,8 +180,10 @@ class NuscenesDataset(Dataset):
         poses = arcline_path_utils.discretize_lane(lane_record, resolution_meters=0.5)
         poses = np.asarray(poses)
         lane = np.polyfit(poses[:,0], poses[:,1], 2)
-        poly = np.poly1d(lane) 
-        return {"x":poses[:,0], "poly":poly}
+        poly = np.poly1d(lane)
+        dx = np.diff(poses[:,0])
+        dy = np.diff(poses[:,1])
+        return {"x":poses[:,0], "y": poses[:,1], "dx": dx, "dy": dy, "poly":poly}
     
     def __sensor2EgoCoordinates(self, pc):
         pc.rotate(Quaternion(self.cs_record['rotation']).rotation_matrix)

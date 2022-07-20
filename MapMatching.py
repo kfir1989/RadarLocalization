@@ -92,6 +92,24 @@ class PF:
 
         return transformed_polynom.T
     
+    @staticmethod
+    def transformDynTrack(tstate, worldRef, particle):
+        dx = worldRef[0]-particle["x"]
+        dy = worldRef[1]-particle["y"]
+        dtheta = worldRef[2]-particle["theta"]
+        center = (particle["x"], particle["y"])
+        rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=dtheta, scale=1)
+        transform_matrix = rotate_matrix
+        transform_matrix[0,2] -= dx
+        transform_matrix[1,2] -= dy
+        
+        b = np.ones((tstate.shape[0],1))
+        trk_expanded = np.hstack((tstate,b))
+        
+        transformed_trk = np.dot(transform_matrix,trk_expanded.T)
+
+        return transformed_trk.T
+    
     def calcTrkWeight(self, extTrack):
         if 0:
             trk_age = extTrack.last_update_frame_idx - extTrack.create_frame_idx
@@ -102,8 +120,38 @@ class PF:
             weight = 1
         
         return weight
+    
+    def computeDistForDynamicTracks(self, trk, lanes):
+        total_dist = 1e6
+        dx = trk[:,0].reshape(-1,1)-lanes[:,0].reshape(1,-1)
+        dy = trk[:,1].reshape(-1,1)-lanes[:,1].reshape(1,-1)
+
+        dxdy_norm = np.sqrt(dx**2 + dy**2) #No one has any priority
+        it = dxdy_norm.argmin(axis=1)
+
+        dx_min = np.take_along_axis(dx, np.expand_dims(it, axis=-1), axis=1)
+        dy_min = np.take_along_axis(dy, np.expand_dims(it, axis=-1), axis=1)
+        dxdy_min = np.array([dx_min, dy_min])
+        dxdy_min = np.squeeze(dxdy_min, -1) if dxdy_min.ndim == 3 else dxdy_min  
         
-    def computeDist(self, polynom, boundaryPoints, heading, curve=0, debug=False):
+        #print("trk", trk, "dxdy_min", dxdy_min, "lanes[it,0]", lanes[it,0], "lanes[it,1]", lanes[it,1])
+
+        sigma_x = 0.2
+        sigma_y = 0.2
+        P = np.array([[sigma_x, 0],[0, sigma_y]])
+        dist = np.sum(np.dot((dxdy_min.T)**2,np.linalg.inv(P)), axis=1)
+        #take 20% highest
+        n_elements = int(max(1, trk.shape[0] / 5))
+        #print(dist.shape, n_elements)
+        top_ind = np.argpartition(dist, -n_elements)[-n_elements:]
+        top20_dist = dist[top_ind]
+        total_dist = np.mean(top20_dist)
+        
+        #print("total_dist", total_dist)
+        
+        return total_dist
+        
+    def computeDistForStaticTracks(self, polynom, boundaryPoints, heading, curve=0, debug=False):
         R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
         
         polynom_rotated = np.dot(R, polynom.T).T
@@ -192,11 +240,23 @@ class PF:
         (row,col) = np.where(roadMap[map_ys:map_ye,map_xs:map_xe])
         if row.shape[0] > 0:
             boundary_points = self.map2World(np.array([col+map_xs, row+map_ys]).astype('float64'), worldRef, map_center)
-            cost = self.computeDist(polynom=transformed_polynom, boundaryPoints=boundary_points.T, heading=worldRef[2], curve=curve,debug=debug)
+            cost = self.computeDistForStaticTracks(polynom=transformed_polynom, boundaryPoints=boundary_points.T, heading=worldRef[2], curve=curve,debug=debug)
             #combine (independent) measurements
             cost *= weight
         else:
             cost = 1e3
+           
+        return cost
+    
+    def eval_dynamic_track_map_match(self, trk, particle, worldRef, firstWorldRef, lanes, debug=False):
+        cost = 0
+        if trk.confirmed and trk.hits > 10:
+            tstate, tspeed = trk.getTranslatedState()
+            abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
+            if abs_vel > 2:
+                tstate = np.squeeze(tstate,axis=2) - firstWorldRef
+                transformed_dyn_track = self.transformDynTrack(tstate, worldRef, particle)
+                cost = self.computeDistForDynamicTracks(transformed_dyn_track[-10:,:], lanes) # consider only last 10 updates!
            
         return cost
 
@@ -302,7 +362,8 @@ class PF:
             particle["x"] += dx
             particle["y"] += dy
 
-    def eval_sensor_model(self, worldRef, extTracks, roadMap):
+    def eval_sensor_model(self, worldRef, extTracks, dynTracks, firstWorldRef, roadMap, lanes):
+        w = 4
         self.polynom_cost = np.ones(len(extTracks)) * 1e6
         for particle in self.particles:
             cost_total = 1e-6 # for accumulating probabilities
@@ -310,6 +371,11 @@ class PF:
                 cost = self.eval_polynom_map_match(ext_track, particle, worldRef, roadMap)
                 self.polynom_cost[i_ext_track] = min(self.polynom_cost[i_ext_track], cost)
                 cost_total += cost
+                
+            for i_dyn, dyn_track in enumerate(dynTracks):
+                cost = self.eval_dynamic_track_map_match(dyn_track, particle, worldRef, firstWorldRef, lanes)
+                cost_total += w * cost
+            
             particle['weight'] = 1 / cost_total #cost instead of probability
 
         #normalize weights
@@ -418,20 +484,20 @@ class MapMatching:
         
         return mask
 
-    def run(self, extTracks, nuscMap, firstWorldRef, IMURelativeRef):
+    def run(self, extTracks, nuscMap, dynTracks, lanes, firstWorldRef, IMURelativeRef):
         try:
             last_output = np.array([self.output_position['x'], self.output_position['y']])
         except:
             last_output = IMURelativeRef[0:2]
 
+        lanes = np.concatenate(lanes, axis=0)
         if self.pf.current_odom_xy_theta is None:
             self.pf.initialize_particles(self.N, IMURelativeRef)
-        print("last_output", last_output)
         drivable_area = self.getDrivableArea(nuscMap, firstWorldRef + last_output)
         self.pf.sample_motion_model(IMURelativeRef, drivable_area)
         #road_map = self.getMapReference(nuscMap, origRadarRef)
         self.road_map = getCombinedMap(nuscMap, firstWorldRef + last_output, patchSize=300)
-        self.pf.eval_sensor_model(IMURelativeRef, extTracks, self.road_map)
+        self.pf.eval_sensor_model(IMURelativeRef, extTracks, dynTracks, firstWorldRef, self.road_map, lanes)
         self.best_particle = self.pf.getBestParticle()
         self.pf.resample_particles()
         
