@@ -80,7 +80,9 @@ def createPolynom(a1,a2,a3,xstart=0,xend=100):
     return x, y
 
 def generatePolynom(a1,a2,a3,n,xstart=0,xend=100):
-    x = np.sort(np.asarray(random.sample(range(int(xstart), int(xend)), n)))
+    x = np.sort(np.asarray(np.random.random_sample(n)))
+    x = (xend - xstart) * x + xstart
+    print("x",x)
     y = a3*x**2 + a2*x + a1
 
     return x, y
@@ -91,8 +93,8 @@ def getXYCovMatrix(x, y, dR, dAz):
     cov = errorPropagation(R,Az,dR,dAz) #back to xy covariance matrix
     return cov
 
-def generatePolynomNoisyPoints(N, a1, a2, a3, dR, dAz, pos=[0,0], R=np.eye(2)):
-    x, y = generatePolynom(a1,a2,a3,N,xstart=pos[0],xend=pos[0]+100)
+def generatePolynomNoisyPoints(N, a1, a2, a3, dR, dAz, xRange=[0,100], pos=[0,0], R=np.eye(2)):
+    x, y = generatePolynom(a1,a2,a3,N,xstart=xRange[0],xend=xRange[1])
     new_pos = np.matmul(R, np.array([x-pos[0],y-pos[1]]))
     x = new_pos[0,:]
     y = new_pos[1,:]

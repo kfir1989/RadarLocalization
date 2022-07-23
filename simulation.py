@@ -12,7 +12,7 @@ class Simulation():
 class DynamicSimulation():
     def __init__(self, model, **kwargs):
         self.model = model
-        self.dataset = DynamicSimulatedDataset()
+        self.dataset = DynamicSimulatedDataset(**kwargs)
         self.video = SimulationVideo()
     
     def run(self, N):
@@ -21,7 +21,7 @@ class DynamicSimulation():
             zw, covw, prior, video_data = self.dataset.getData(t)
             print("prior", prior)
             points, polynoms = self.model.run(zw,covw,prior)
-            self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo())
+            self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
             
 class NuscenesSimulation():
     def __init__(self, nusc, model, scene_id, **kwargs):
@@ -49,7 +49,7 @@ class NuscenesSimulation():
             if generate_video:
                 self.video_debug.generate(name=f"video\scene{self.scene}_debug.avi", fps=5)
         if self.mm and self.video_list['video_pf']:
-            self.video_pf.save(t,video_data, mm_results, polynoms, nusc_map)
+            self.video_pf.save(t,video_data, mm_results, polynoms, dynamic_tracks, nusc_map)
             if generate_video:
                 self.video_pf.generate(name=f"video\scene{self.scene}_pf.avi", fps=5)
         if self.mm and self.video_list['video_pf_xy']:

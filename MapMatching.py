@@ -4,6 +4,7 @@ import copy
 import time
 import scipy.stats
 from scipy.spatial.distance import cdist
+from scipy.interpolate import splrep, splev
 
 from utils import ExtObjectDataAssociator
 from map_utils import getRoadBorders, getCombinedMap
@@ -21,6 +22,7 @@ class PF:
         self.sigma_rot2 = 0.01
         self.current_odom_xy_theta = None
         self.uncertainty_flag = False
+        self.imu_bias_factor = 0
         
     @staticmethod
     def getXYLimits(extTrack):
@@ -52,6 +54,44 @@ class PF:
             pos[:, 1] += mapRef[1]
             
             return pos
+        
+    @staticmethod    
+    def sigma_clip(x, alpha=2):
+        mean = np.mean(x)
+        var = np.std(x)
+        x[x-mean > alpha * var] = mean
+        
+        return x
+
+    @staticmethod
+    def getLineIndication(pos, N=50, thr=0.005):
+        x = pos[-N:,0]
+        y = pos[-N:,1]
+
+        fit, cov = np.polyfit(x, y, 1, cov=True)
+        if abs(fit[0]) > 2:
+            fit, cov = np.polyfit(y, x, 1, cov=True)
+            
+        if np.sqrt(cov[0,0]) < thr:
+            return True
+
+        return False
+    
+    @staticmethod
+    def computeIMUAngleBias(imuPos, pfPose, N=100):
+        if imuPos.shape[0] >= N:
+            l = np.linalg.norm(imuPos[-N,:]-imuPos[0,:])
+            if l > 50 and PF.getLineIndication(imuPos, N=N):
+                fit_imu = np.polyfit(imuPos[-N:,0], imuPos[-N:,1], 1, cov=False)
+                fit_pf = np.polyfit(pfPose[-N:,0], pfPose[-N:,1], 1, cov=False)
+
+                m1 = fit_imu[0]
+                m2 = fit_pf[0]
+                theta = np.arctan((m1 - m2)/(1 + m1*m2))
+                if(abs(theta < 0.01)):
+                    return theta
+
+        return None
 
     @staticmethod
     def map2World(pos, worldRef, mapRef):
@@ -125,20 +165,30 @@ class PF:
         total_dist = 1e6
         dx = trk[:,0].reshape(-1,1)-lanes[:,0].reshape(1,-1)
         dy = trk[:,1].reshape(-1,1)-lanes[:,1].reshape(1,-1)
+        
+        trk_dx = trk[-1,0]-trk[0,0]
+        trk_dy = trk[-1,1]-trk[0,1]
+        trk_angle = np.arctan2(np.repeat(trk_dy, trk.shape[0]), np.repeat(trk_dx, trk.shape[0])) 
+        lane_angle = np.arctan2(lanes[:,3], lanes[:,2])
+        dv = trk_angle.reshape(-1,1)-lane_angle.reshape(1,-1)
 
-        dxdy_norm = np.sqrt(dx**2 + dy**2) #No one has any priority
+        dxdy_norm = np.sqrt(dx**2 + dy**2 + dv**2) #No one has any priority
         it = dxdy_norm.argmin(axis=1)
 
         dx_min = np.take_along_axis(dx, np.expand_dims(it, axis=-1), axis=1)
         dy_min = np.take_along_axis(dy, np.expand_dims(it, axis=-1), axis=1)
-        dxdy_min = np.array([dx_min, dy_min])
+        dv_min = np.take_along_axis(dv, np.expand_dims(it, axis=-1), axis=1)
+        dv_min = self.sigma_clip(dv_min)
+
+        dxdy_min = np.array([dx_min, dy_min, dv_min])
         dxdy_min = np.squeeze(dxdy_min, -1) if dxdy_min.ndim == 3 else dxdy_min  
         
         #print("trk", trk, "dxdy_min", dxdy_min, "lanes[it,0]", lanes[it,0], "lanes[it,1]", lanes[it,1])
 
         sigma_x = 0.2
         sigma_y = 0.2
-        P = np.array([[sigma_x, 0],[0, sigma_y]])
+        sigma_grad = 0.2
+        P = np.array([[sigma_x, 0, 0],[0, sigma_y, 0],[0, 0, sigma_grad]])
         dist = np.sum(np.dot((dxdy_min.T)**2,np.linalg.inv(P)), axis=1)
         #take 20% highest
         n_elements = int(max(1, trk.shape[0] / 5))
@@ -292,6 +342,12 @@ class PF:
         self.ins_bounds = {"x1": 0, "x2": 0, "y1": 0, "y2": 0}
     
     def sample_motion_model(self, new_odom_xy_theta, drivableArea):
+        imu_angle_bias = 0
+        if self.imu_bias_factor == 0:
+            b = self.computeIMUAngleBias(self.imu_path[:self.counter,:], self.pf_path[:self.counter,:]) 
+            if b is not None:
+                self.imu_bias_factor = -b
+                imu_angle_bias = -b
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta is not None:
             old_odom_xy_theta = self.current_odom_xy_theta
@@ -335,6 +391,7 @@ class PF:
             particle["x"] += dt_noisy * np.cos(particle["theta"] + dr1_noisy)
             particle["y"] += dt_noisy * np.sin(particle["theta"] + dr1_noisy)
             particle["theta"] += (delta[2] - dr1_noisy)
+            particle["theta"] += imu_angle_bias
             particle["theta"] = (particle["theta"] + np.pi) % (2 * np.pi) - np.pi
             #Add along-track and cross-track noise (for higher flexibility)
             R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
@@ -342,8 +399,8 @@ class PF:
             xy_rotated = np.dot(R, xy)
             
 
-            sigma_factor_along_track = 1 if uncertainty_flag else 0
-            sigma_factor_cross_track = 0.2
+            sigma_factor_along_track = 0.1 if uncertainty_flag else 0
+            sigma_factor_cross_track = 0.1
             sigma_along_track = (dt / 25) if not large_angle_turn_flag else (dt / 50)
             error_along_track = np.random.normal(0, sigma_along_track + sigma_factor_along_track)
             sigma_cross_track = dt / 80
@@ -466,7 +523,9 @@ class MapMatching:
     def __init__(self, N=100):
         self.N = N
         self.pf = PF(N=N) 
-        self.counter = 0
+        self.pf.counter = 0
+        self.pf.imu_path = np.zeros([2000,2])
+        self.pf.pf_path = np.zeros([2000,2])
     
     def getMapReference(self, nuscMap, worldRef):
         edges1 = getRoadBorders(nuscMap=nuscMap, worldRef=worldRef, patchSize=300, layer_names=['walkway'],blur_area=(3,3),threshold1=0.5, threshold2=0.7)
@@ -489,6 +548,9 @@ class MapMatching:
             last_output = np.array([self.output_position['x'], self.output_position['y']])
         except:
             last_output = IMURelativeRef[0:2]
+            
+        self.pf.imu_path[self.pf.counter, :] = IMURelativeRef[0:2]
+        self.pf.pf_path[self.pf.counter, :] = last_output
 
         lanes = np.concatenate(lanes, axis=0)
         if self.pf.current_odom_xy_theta is None:
@@ -500,8 +562,9 @@ class MapMatching:
         self.pf.eval_sensor_model(IMURelativeRef, extTracks, dynTracks, firstWorldRef, self.road_map, lanes)
         self.best_particle = self.pf.getBestParticle()
         self.pf.resample_particles()
+        self.pf.counter += 1
         
-    def getResults(self, extTracks, gtRelativeRef):
+    def getResults(self, extTracks, dynTracks, firstWorldRef, gtRelativeRef, imuRelativeRef, lanes):
         covariance = self.pf.getCovarianceMatrix()
         mean_particle = self.pf.getSigmaClipped()
         self.output_position = mean_particle
@@ -509,22 +572,37 @@ class MapMatching:
         mean_pos = np.array([mean_particle['x'], mean_particle['y']])
         best_pos = np.array([best_particle['x'], best_particle['y']])
         
+        mean_particle = self.pf.getSigmaClipped()
+        
         #DEBUG
         self.cost_true = []
         self.cost_mean = []
-        debug = True if self.counter > 1000 else False
+        debug = True if self.pf.counter > 1000 else False
         for ext_track in extTracks:
             true_pos_particle = {"x": gtRelativeRef[0], "y": gtRelativeRef[1], "theta": gtRelativeRef[2]}
-            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, gtRelativeRef, self.road_map, debug=debug)
-            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, gtRelativeRef, self.road_map, debug=debug)
-            mean_particle = self.pf.getSigmaClipped()
-            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, gtRelativeRef, self.road_map, debug=debug)
+            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, imuRelativeRef, self.road_map, debug=debug)
+            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, imuRelativeRef, self.road_map, debug=debug)
+            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, imuRelativeRef, self.road_map, debug=debug)
             #print("cost_gt", cost_true, "cost_best", cost_best, "cost_mean", cost_mean)
             #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
             self.cost_true.append(cost_true)
             self.cost_mean.append(cost_mean)
+            
+        self.cost_dyn_true = []
+        self.cost_dyn_mean = []
+        lanes = np.concatenate(lanes, axis=0)
+        for dyn_track in dynTracks:
+            if dyn_track.confirmed and dyn_track.hits > 10:
+                true_pos_particle = {"x": gtRelativeRef[0], "y": gtRelativeRef[1], "theta": gtRelativeRef[2]}
+                cost_true = self.pf.eval_dynamic_track_map_match(dyn_track, true_pos_particle, imuRelativeRef, firstWorldRef, lanes)
+                cost_best = self.pf.eval_dynamic_track_map_match(dyn_track, self.best_particle, imuRelativeRef, firstWorldRef, lanes)
+                cost_mean = self.pf.eval_dynamic_track_map_match(dyn_track, mean_particle, imuRelativeRef, firstWorldRef, lanes)
+                #print("cost_gt", cost_true, "cost_best", cost_best, "cost_mean", cost_mean)
+                #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
+                self.cost_dyn_true.append(cost_true)
+                self.cost_dyn_mean.append(cost_mean)
         
-        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean, "covariance": covariance}
+        results = {"all_particles": self.pf.particles, "pf_best_pos": best_pos, "pf_best_theta": best_particle['theta'], "pf_mean_pos": mean_pos, "pf_mean_theta": mean_particle['theta'], "cost_true": self.cost_true, "cost_mean": self.cost_mean, "covariance": covariance, "cost_dyn_true": self.cost_dyn_true, "cost_dyn_mean": self.cost_dyn_mean}
         
         return results
         

@@ -7,13 +7,58 @@ from os.path import isfile, join
 import cv2
 import re
 from map_utils import getRoadBorders, getCombinedMap
+import nuscenes.map_expansion.arcline_path_utils as path_utils
 from matplotlib.ticker import MaxNLocator
+
+def drawLanes(ax, nusc_map, ego_trns):
+    lane_ids = nusc_map.get_records_in_radius(ego_trns[0], ego_trns[1], 80, ['lane', 'lane_connector'])
+    nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']
+    for lane_token in nearby_lanes:
+        lane_record = nusc_map.get_arcline_path(lane_token)
+        poses = path_utils.discretize_lane(lane_record, resolution_meters=0.5)
+        poses = np.array(poses)
+        
+        #w = 2
+        #dx = np.diff(poses[:,0], prepend=0)
+        #dy = np.diff(poses[:,1], prepend=0)
+        #grad = np.abs(dy / (dx + 1e-6))
+        #sx = -1*np.sign(dy) * w * 1/np.sqrt(1+grad**2)
+        #sy = np.sign(dx) * w * grad * 1/np.sqrt(1+grad**2)
+        poses[:, 0] -= 1.2
+        poses[:, 1] -= 1.2
+            
+        ax.scatter(poses[:,0], poses[:,1],color='orange',s=2)
+
+def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000):
+    if trk.confirmed:
+        hstate, hego, hspeed = trk.getHistory()
+        n_last_frames = min(n_last_frames,hstate.shape[0])
+        history_len = hstate.shape[0]
+        if trk.hits > 10:
+        #rotate translate each state according to hego
+            tstate = np.zeros((hstate.shape[0], 2, 1))
+            tspeed = np.zeros((hstate.shape[0], 2, 1))
+            for i, (state, ego, speed) in enumerate(zip(hstate, hego, hspeed)):
+                R = np.array([[np.cos(ego["heading"]), -np.sin(ego["heading"])], [np.sin(ego["heading"]), np.cos(ego["heading"])]])
+                tstate[i, :, :] = np.dot(R, state[0:2]) + ego["T"][0:2].reshape(-1,1)
+                tspeed[i, :, :] = np.dot(R, state[2:4]) + np.dot(R, speed[0:2].reshape(-1,1))
+            abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
+            print(f"abs_vel ={abs_vel}")
+            if abs_vel < velThr:
+                return
+
+            ax.plot(tstate[-n_last_frames:,0]+x_offset, tstate[-n_last_frames:,1]+y_offset, color='red',label='track')
+            dx = tstate[int(history_len / 2) + 1,0]-tstate[int(history_len / 2) - 1,0]
+            dy = tstate[int(history_len / 2) + 1,1]-tstate[int(history_len / 2) - 1,1]
+            ax.arrow(np.mean(tstate[-n_last_frames:,0]+x_offset), np.mean(tstate[-n_last_frames:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
 
 class SimulationVideo:
     def __init__(self):
         self.fig, self.ax = plt.subplots(2,3,figsize=(40,15))
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
+        self.dir_name = f"images/simulation1/"
+        os.system("mkdir -p " + self.dir_name)
         self.x_lim_min = -50
         self.x_lim_max = 50
         self.y_lim_min = 0
@@ -28,9 +73,10 @@ class SimulationVideo:
 
         return ax
     
-    def drawPrior(self, ax, prior, xlim, **kwargs):
-        x,y = createPolynom(prior[0],prior[1],prior[2],xstart=xlim[0],xend=xlim[1])
-        ax.plot(y,x,**kwargs)
+    def drawPrior(self, ax, priors, xlim, **kwargs):
+        for prior in priors:
+            x,y = createPolynom(prior["c"][0],prior["c"][1],prior["c"][2],xstart=prior["xmin"],xend=prior["xmax"])
+            ax.plot(y,x,**kwargs)
         
     def save(self, idx, prior, measurements, points, polynoms, debug, pos=[0,0], heading=0):
         self.x_lim_min = min(min(self.x_lim_min, np.min(measurements["polynom"][:,1])), np.min(measurements["other"][:,1]))
@@ -47,20 +93,20 @@ class SimulationVideo:
         self.ax[0,0] = self.drawEllipses(measurements=measurements,key1="other",key2="dother",ax=self.ax[0,0],edgecolor='blue')
         self.ax[0,0].set_xlim(xlim)
         self.ax[0,0].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,0],prior=prior,xlim=ylim,label='true',linewidth=5)
+        self.drawPrior(ax=self.ax[0,0],priors=prior,xlim=ylim,label='true',linewidth=5)
         self.ax[0,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,0],edgecolor='red')
         
         self.ax[0,1].set_title("Point tracks frame={}".format(idx))
         self.ax[0,1].scatter(points[:,1], points[:,0])
         self.ax[0,1].set_xlim(xlim)
         self.ax[0,1].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,1],prior=prior,xlim=ylim,label='true',linewidth=3,linestyle='--')
+        self.drawPrior(ax=self.ax[0,1],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--')
         self.ax[0,1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,1])
         
         self.ax[0,2].set_title("Extended tracks frame={}".format(idx))
         self.ax[0,2].set_xlim(xlim)
         self.ax[0,2].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,2],prior=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[0,2],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
         self.ax[0,2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,2],edgecolor='red')
         for polynom in polynoms:
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
@@ -70,7 +116,7 @@ class SimulationVideo:
         self.ax[1,0].set_title("Points that generated a new polynom frame={}".format(idx))
         self.ax[1,0].set_xlim(xlim)
         self.ax[1,0].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,0],prior=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,0],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
         self.ax[1,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,0])
         for c,pair in enumerate(debug["pgpol"]):
             x_plot = np.linspace(pair["polynom"]["x_start"], pair["polynom"]["x_end"], 100)
@@ -81,7 +127,7 @@ class SimulationVideo:
         self.ax[1,1].set_title("Points that updated point tracks frame={}".format(idx))
         self.ax[1,1].set_xlim(xlim)
         self.ax[1,1].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,1],prior=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,1],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
         self.ax[1,1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,1])
         for pair in debug["mupoi"]:
             self.ax[1,1].scatter(pair["measurements"][1], pair["measurements"][0],color='blue')
@@ -90,7 +136,7 @@ class SimulationVideo:
         self.ax[1,2].set_title("Points that updated extended tracks frame={}".format(idx))
         self.ax[1,2].set_xlim(xlim)
         self.ax[1,2].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,2],prior=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,2],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
         self.ax[1,2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,2])
         unique_polynoms = set(d['id'] for d in debug["mupol"])
         print("len(unique_polynoms)", len(unique_polynoms))
@@ -108,7 +154,7 @@ class SimulationVideo:
             xy = np.array(xy).T
             self.ax[1,2].scatter(xy[1,:], xy[0,:],c=self.colors[c])
             
-        plt.savefig(f'images/track_{idx}.png')
+        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.ax[0,0].clear()
         self.ax[0,1].clear()
         self.ax[0,2].clear()
@@ -414,6 +460,7 @@ class PFVideo:
         self.fig, self.ax = plt.subplots(2,3,figsize=(30,14))
         self.fig2, self.ax2 = plt.subplots(1,2,figsize=(30,14))
         self.fig3, self.ax3 = plt.subplots(1,3,figsize=(30,14))
+        self.fig4, self.ax4 = plt.subplots(1,3,figsize=(30,14))
         self.x_lim_min = 1e6
         self.x_lim_max = 1e-6
         self.y_lim_min = 1e6
@@ -501,7 +548,7 @@ class PFVideo:
         
         return np.array([gt_cross_track, gt_along_track]), np.array([pf_cross_track, pf_along_track]), np.array([imu_cross_track, imu_along_track])
         
-    def save(self, idx, video_data, mm_results, polynoms, nusc_map):
+    def save(self, idx, video_data, mm_results, polynoms, tracks, nusc_map):
         gt_pos = np.array(video_data['pos'])
         gt_heading = np.deg2rad(video_data['heading'])
         pf_best_pos = mm_results['pf_best_pos']
@@ -514,6 +561,8 @@ class PFVideo:
         all_particles = mm_results['all_particles']
         cost_true = mm_results['cost_true']
         cost_mean = mm_results['cost_mean']
+        cost_dyn_true = mm_results['cost_dyn_true']
+        cost_dyn_mean = mm_results['cost_dyn_mean']
         pf_cov = mm_results['covariance']
         
         self.x_lim_min = min(self.x_lim_min, min(gt_pos[0], pf_mean_pos[0]))
@@ -671,17 +720,65 @@ class PFVideo:
                 #self.ax3[2].text(0.5*(x_plot[0] + x_plot[-1])-self.first_pos[0]+self.patch_size*0.5 + 4, 0.5*(y_plot[0] + y_plot[-1])-self.first_pos[1]+self.patch_size*0.5+4, f"{c+1}", size=20)
             self.ax3[2].scatter(pf_mean_pos[0]-self.first_pos[0]+self.patch_size*0.5,pf_mean_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=8,color="blue",label="PF")
             
-            self.ax3[2].legend(loc="upper left")
+            self.ax3[2].legend(loc="upper left")          
+      
+        n_tracks = 0
+        for trk in tracks:
+            if trk.confirmed and trk.hits > 10:
+                n_tracks +=1
+                
+        if n_tracks > 0:
+            print("n_tracks", n_tracks, "cost_dyn_true", cost_dyn_true, "cost_dyn_mean", cost_dyn_mean)
+            self.ax4[0].scatter(range(1,n_tracks+1),cost_dyn_true,color="green",alpha=1, marker="x", s=100, label="GT")
+            self.ax4[0].scatter(range(1,n_tracks+1),cost_dyn_mean,color="blue",alpha=1, marker="o", s=100, label="PF")
+            self.ax4[0].legend(loc="upper right")
+            self.ax4[0].set_xlim([0,n_tracks+1])
+            self.ax4[0].xaxis.set_major_locator(MaxNLocator(integer=True))
+            self.ax4[0].set_title("Cost of dynamic track-map matching", fontsize=20)
+            self.ax4[0].set(xlabel='track #', ylabel='cost')
+            
+            self.ax4[1].set_title("Dynamic tracks from GT perspective", fontsize=20)
+            self.ax4[1].set(xlabel='x [m]', ylabel='y [m]')
+            
+            gt_x_offset = gt_pos[0] - imu_pos[0]
+            gt_y_offset = gt_pos[1] - imu_pos[1]
+            for trk in tracks:
+                drawTrack(self.ax4[1], trk, x_offset=gt_x_offset, y_offset=gt_y_offset, velThr=2, n_last_frames=10)
+            xlim = list(self.ax4[1].get_xlim())
+            ylim = list(self.ax4[1].get_ylim())
+            print("xlim",xlim,"ylim",ylim)
+            xlim[0] -= 20
+            xlim[1] += 20
+            ylim[0] -= 20
+            ylim[1] += 20
+            drawLanes(self.ax4[1], nusc_map, gt_pos)
+            self.ax4[1].set_xlim(xlim)
+            self.ax4[1].set_ylim(ylim)
+            
+            pf_x_offset = pf_mean_pos[0] - imu_pos[0]
+            pf_y_offset = pf_mean_pos[1] - imu_pos[1]
+            self.ax4[2].set_title("Dynamic tracks from PF perspective", fontsize=20)
+            self.ax4[2].set(xlabel='x [m]', ylabel='y [m]')
+            for trk in tracks:
+                drawTrack(self.ax4[2], trk, x_offset=pf_x_offset, y_offset=pf_y_offset, velThr=2, n_last_frames=10)
+            drawLanes(self.ax4[2], nusc_map, gt_pos)
+                
+            self.ax4[2].set_xlim(xlim)
+            self.ax4[2].set_ylim(ylim)
         
         self.counter += 1
 
         self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.fig2.savefig(os.path.join(self.dir_name, f'track_{idx}_pf.png'))
         self.fig3.savefig(os.path.join(self.dir_name, f'track_{idx}_cost.png'))
+        self.fig4.savefig(os.path.join(self.dir_name, f'track_{idx}_dynamic_cost.png'))
         
         self.ax3[0].clear()
         self.ax3[1].clear()
         self.ax3[2].clear()
+        self.ax4[0].clear()
+        self.ax4[1].clear()
+        self.ax4[2].clear()
         self.ax2[1].clear()
         
     def generate(self, name, fps=1):
@@ -913,27 +1010,6 @@ class DynamicTrackerVideo:
         y_offset = -first_pos[1]+patch_size*0.5
         return x_offset, y_offset
     
-    def drawTrack(self, ax, trk, x_offset=0, y_offset=0, velThr=2):
-        if trk.confirmed:
-            hstate, hego, hspeed = trk.getHistory()
-            history_len = hstate.shape[0]
-            if trk.hits > 10:
-            #rotate translate each state according to hego
-                tstate = np.zeros((hstate.shape[0], 2, 1))
-                tspeed = np.zeros((hstate.shape[0], 2, 1))
-                for i, (state, ego, speed) in enumerate(zip(hstate, hego, hspeed)):
-                    R = np.array([[np.cos(ego["heading"]), -np.sin(ego["heading"])], [np.sin(ego["heading"]), np.cos(ego["heading"])]])
-                    tstate[i, :, :] = np.dot(R, state[0:2]) + ego["T"][0:2].reshape(-1,1)
-                    tspeed[i, :, :] = np.dot(R, state[2:4]) + np.dot(R, speed[0:2].reshape(-1,1))
-                abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
-                print(f"abs_vel ={abs_vel}")
-                if abs_vel < velThr:
-                    return
-
-                ax.plot(tstate[:,0]+x_offset, tstate[:,1]+y_offset, color='red',label='track')
-                dx = tstate[int(history_len / 2) + 1,0]-tstate[int(history_len / 2) - 1,0]
-                dy = tstate[int(history_len / 2) + 1,1]-tstate[int(history_len / 2) - 1,1]
-                ax.arrow(np.mean(tstate[:,0]+x_offset), np.mean(tstate[:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
 
     def drawDetections(self, ax, Z, X):
         for z,x in zip(Z,X):
@@ -981,7 +1057,7 @@ class DynamicTrackerVideo:
             self.ax[1].plot(ego_path[:,0]+self.x_offset, ego_path[:,1]+self.y_offset,label='Ego')
 
         for trk in tracks:
-            self.drawTrack(self.ax[1], trk, x_offset=self.x_offset, y_offset=self.y_offset, velThr=2)
+            drawTrack(self.ax[1], trk, x_offset=self.x_offset, y_offset=self.y_offset, velThr=2)
             
         self.ax[1].set_title(f"Dynamic tracks for scene = {self.scene}", fontsize=20)
         self.ax[1].set(xlabel='x [m]', ylabel='y [m]')

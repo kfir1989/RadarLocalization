@@ -1,9 +1,9 @@
 Tuesday:
-
-1. similar to static - plot a cost function graph for dynamic tracks.
-2. enlarge noise on angle (PF)
-3. run and see results
+1. use tracks up to last updated state (not more than that)
+2. enlarge noise on angle (PF) [might be not necessary)
 4. try to enlarge uncertainty when avg(log cost) is too high
+5. extract corners from digital map -> add to prior list of input to static tracker
+
 
 Methods:
 1. polynom tracking: 
@@ -11,9 +11,20 @@ Methods:
 - write some equations and add: static simulation results (different measurement noises, different noise on prior)
 - Add dynamic simulation results with noise on rotation translation at each step (no noise on prior)
 - Add contribution: several priors, similarity check and show simulation the supports that
+simulation:
+- generate two polynoms with the same coefficients, but with a gap between them.
+- Add several biases in a0,a1,a2 coeffients of the polynom
+- examine the algoithm as opposed to the original one (error on the coefficients + innerproduct of substraction)
+
+
 
 2. EKF for dynamic tracks + clustering: explain briefly and give some equations
 
 3. Map-matching: particle filter with different noise on translation-rotation, explain cost function and give psuedo algorithm.
 
 Results:
+
+
+
+
+-0.032581456221060255

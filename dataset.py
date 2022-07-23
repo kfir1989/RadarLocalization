@@ -26,37 +26,61 @@ class Dataset():
 class DynamicSimulatedDataset(Dataset):
     def __init__(self, **kwargs):
         x0 = kwargs.pop('x0', (0,0))
-        v0 = kwargs.pop('v0', 5)
+        v0 = kwargs.pop('v0', 0)
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
-        prior = kwargs.pop('prior', (1, 0.009, -0.004))
+        self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
         dR = kwargs.pop('dR', 0.4)
         dAz = kwargs.pop('dAz', 0.05)
-        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.5)
+        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 1) #1:1
         seed = kwargs.pop('seed', None)
-        self.__generateEgoMotion(x0=np.asarray(x0), v0=v0, a0=a0, path=prior, N=N, dT=0.1)
-        self.prior, self.dR, self.dAz, self.polynom_noise_ratio = prior, dR, dAz, polynom_noise_ratio
-        x, y = createPolynom(a1=prior[0],a2=prior[1],a3=prior[2],xstart=0,xend=200)
+        self.__generateEgoMotion(x0=np.asarray(x0), v0=v0, a0=a0, path=self.prior[0], N=N, dT=0.1)
+        self.dR, self.dAz, self.polynom_noise_ratio = dR, dAz, polynom_noise_ratio
         self.N = N
         
     def getData(self, t):
         pos = [self.t[0,t], self.t[1,t]]
         heading = np.rad2deg(np.arccos(self.R[0,0,t]))
-        z,dz = self.__generateData(prior=self.prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], polynom_noise_ratio=self.polynom_noise_ratio, N=100)
+        z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
+        xmin, xmax = 300, 0
+        for prior in self.prior:
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=30)
+            z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
+            xmin = min(xmin, np.min(z[:,0]))
+            xmax = max(xmax, np.max(z[:,0]))
+        
+        N_noise = self.polynom_noise_ratio * z.shape[0]
+        zp,dzp = self.__generateNoise(xRange=[xmin,xmax], dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=N_noise)
+        z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
+        
         zw, covw = self.__convert2WorldCoordinates(z, dz, self.R[:,:,t], self.t[:,t].reshape(2,1))
-        video_data = {"polynom":zw[0:50,:],"dpolynom":covw[0:50,:,:], "other":zw[50:100,:],"dother":covw[50:100,:,:],
+        data_size = int(zw.shape[0]/2)
+
+        video_data = {"polynom":zw[0:data_size,:],"dpolynom":covw[0:data_size,:,:], "other":zw[data_size:,:],"dother":covw[data_size:,:,:],
                      "pos":pos,"heading":heading}
         
-        return zw, covw, self.prior, video_data
+        prior = self.__generatePrior(self.prior)
         
-    def __generateData(self, prior, dR, dAz, pos, R, polynom_noise_ratio=0.5, N=100):
-        [_,_,x_poly,y_poly,polynom_cov] = generatePolynomNoisyPoints(N=int(polynom_noise_ratio*N),a1=prior[0],a2=prior[1],a3=prior[2],dR=dR,dAz=dAz,pos=pos,R=np.linalg.inv(R))
-        [x_noise,y_noise,noise_cov] = generateRandomNoisyPoints(N=int((1-polynom_noise_ratio)*N),xRange=[3,100],yRange=[-40,40],dR=dR,dAz=dAz)
-        x_meas = np.concatenate([x_poly, x_noise])
-        y_meas = np.concatenate([y_poly, y_noise])
-        dz_meas = np.concatenate([polynom_cov, noise_cov])
-        z = np.array([x_meas, y_meas]).T
-        dz = np.array(dz_meas)
+        return zw, covw, prior, video_data
+        
+    def __generateData(self, prior, dR, dAz, pos, R, N=50):
+        [_,_,x_poly,y_poly,polynom_cov] = generatePolynomNoisyPoints(N=N,a1=prior[0],a2=prior[1],a3=prior[2],dR=dR,dAz=dAz,xRange=[prior[3],prior[4]],pos=pos,R=np.linalg.inv(R))
+        if prior[5]:
+            z = np.array([x_poly, y_poly]).T
+            dz = np.array(polynom_cov)
+        else:
+            z = np.array([y_poly, x_poly]).T
+            dz_tmp = np.array(polynom_cov)
+            dz = np.copy(dz_tmp).T
+            dz[:,0,0] = dz_tmp[:,1,1]
+            dz[:,1,1] = dz_tmp[:,0,0]
+        
+        return z,dz
+    
+    def __generateNoise(self, xRange, dR, dAz, pos, R, N=50):
+        [x_noise,y_noise,noise_cov] = generateRandomNoisyPoints(N=N,xRange=xRange,yRange=[-40,40],dR=dR,dAz=dAz)
+        z = np.array([x_noise, y_noise]).T
+        dz = np.array(noise_cov)
         
         return z,dz
     
@@ -66,6 +90,14 @@ class DynamicSimulatedDataset(Dataset):
         covw = np.matmul(np.matmul(R, cov), R.T)
         
         return zw.T, covw
+    
+    def __generatePrior(self, coeffList):
+        prior_list = []
+        for coeff in coeffList:
+            prior_list.append({"c": (coeff[0], coeff[1], coeff[2]), "xmin": coeff[3], "xmax": coeff[4]}, "fx":  coeff[5])
+            
+        return prior_list
+            
     
     def __generateEgoMotion(self, x0, v0, a0, path, N, dT):
         dist = np.arange(0,N)*dT*(v0+a0*dT)
