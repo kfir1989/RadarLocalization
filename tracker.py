@@ -5,18 +5,19 @@ from numpy.polynomial import polynomial as P
 from utils import *
 import detector
 import scipy
+from sklearn.cluster import DBSCAN
     
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator()
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=10)
         self.pnt_object_list = []
-        self.pnt_data_associator = PointObjectDataAssociator()
+        self.pnt_data_associator = PointObjectDataAssociator(delta=2)
         self.eta = 30
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 12
+        self.pnt_max_non_update_iterations = 8
         self.ext_max_non_update_iterations = 10
         self.max_decline_factor = 100
         self.system_rotated_flag = False
@@ -63,6 +64,7 @@ class StaticTracker:
         return self.debug
         
     def run(self, z, dz, prior):
+        print("start tracker...")
         self.frame_idx += 1
         self.debug = {"pgpol": [], "mupoi": [], "mupol": []}
         print("Number of point tracks before run()", len(self.pnt_object_list))
@@ -78,8 +80,11 @@ class StaticTracker:
         z, dz = self.trackUpdate(z, dz, Ge, Gp)
         self.trackInitPnt(z,dz)
             
-        self.generateExtObject(prior)
+        if self.frame_idx > 1:
+            self.generateExtObject(prior)
         self.trackMaintenance()
+        
+        print("end tracker...")
         
         return self.getPoints(), self.getPolynoms()
         
@@ -91,11 +96,13 @@ class StaticTracker:
             for idx_track, ext_track in enumerate(self.ext_object_list):
                 x = ext_track.getStateVector()
                 x_pred = ext_track.getPredictedStateVector()
-                y_pred = x_pred[0] + x_pred[1]*z[0] + x_pred[2]*z[0]**2
+                zx = z[0,:]if ext_track.getFxFlag() else z[1,:]
+                zy = z[1,:]if ext_track.getFxFlag() else z[0,:]
+                y_pred = x_pred[0] + x_pred[1]*zx + x_pred[2]*zx**2
                 P_pred = ext_track.getPredictedCovarianceMatrix()
-                Ha = np.array([1, z[0], z[0]**2])
+                Ha = np.array([1, zx, zx**2])
                 S_pred = np.dot(np.dot(Ha, P_pred[0:3,0:3]), Ha.T)
-                Ge[idx_z,idx_track] = self.ext_data_associator.calcLikelihood(z[0], z[1], y_pred, S_pred, x)
+                Ge[idx_z,idx_track] = self.ext_data_associator.calcLikelihood(zx, zy, y_pred, S_pred, x)
                     
             for idx_track, pnt_track in enumerate(self.pnt_object_list):
                 x = pnt_track.getStateVector()
@@ -127,6 +134,8 @@ class StaticTracker:
             else:
                 i_trk = i_trk_e
                 trk = self.ext_object_list[i_trk]
+                x = x if trk.getFxFlag() else z[i_meas][1]
+                y = y if trk.getFxFlag() else z[i_meas][0]
                 trk.counter_update += 1
                 Hse = np.array([1 if x < trk.getStateVector()[3] else 0, 1 if x > trk.getStateVector()[4] else 0])
                 H = np.array([[0, 0, 0, Hse[0], Hse[1]],[1, x, x**2, 0, 0]])
@@ -134,7 +143,7 @@ class StaticTracker:
                 #print("R",R)
                 print("Updating extended object track = ", i_trk)
                 self.ext_object_list[i_trk].update(np.array([x,y]).T, current_frame_idx=self.frame_idx, H=H, R=R)
-                self.debug["mupol"].append({"measurements": np.array([x,y]).T, "polynom":self.ext_object_list[i_trk].getStateVector(), "id":i_trk})
+                self.debug["mupol"].append({"measurements": np.array([x,y]).T, "polynom":self.ext_object_list[i_trk].getStateVector(), "id":i_trk, "fxFlag": self.ext_object_list[i_trk].getFxFlag()})
                 #print("P after update", self.ext_object_list[i_trk].getStateCovarianceMatrix())
                 
         for i_meas in sorted(assigned_meas_list, reverse=True):
@@ -149,7 +158,7 @@ class StaticTracker:
             new_trk = PointObjectTrack(x=x.reshape(1,-1), P=cov, create_frame_idx=self.frame_idx)
             self.pnt_object_list.append(new_trk)
             
-    def trackInitExt(self, polynom, generated_points):
+    def trackInitExt(self, polynom, generated_points, fxFlag=True):
         #calc arc length: if too short, don't initiate new track
         integral_expression = np.array([1+polynom["f"].c[1]**2, 4*polynom["f"].c[0]*polynom["f"].c[1], 4*polynom["f"].c[0]**2])
         f = lambda x:integral_expression[0]+integral_expression[1]*x+integral_expression[2]*x**2
@@ -161,9 +170,8 @@ class StaticTracker:
         x = np.array([polynom["f"].c[2], polynom["f"].c[1], polynom["f"].c[0], polynom["x_start"], polynom["x_end"]]).T
         trk_similar_test = True
         if (not trk_similar_test or not self.isTrkSimilar(x)):
-            new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx)
-            new_trk.static_cars_flag = detector.detectCarsInARow(generated_points)
-            print("created an extended object!", x, "static_cars_flag", new_trk.static_cars_flag)
+            new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx,fxFlag=fxFlag)
+            print("created an extended object!", x)
             self.ext_object_list.append(new_trk)
             return True
         else:
@@ -188,12 +196,13 @@ class StaticTracker:
             P = PM[:,:,ip]
             if(P[j,j] > 0):
                 nk = np.count_nonzero(P[:,j])
+                selected_pnts = np.where(P[:,j]>0)
                 if nk > self.k:
+                    fx_flag = priors[ip]["fx"]
                     xy = np.zeros((2,nk))
-                    selected_pnts = np.where(P[:,j]>0)
                     for i_pnt, pnt in enumerate(selected_pnts[0]):
                         #print("i_pnt", pnt)
-                        xy[:,i_pnt] = np.squeeze(self.pnt_object_list[pnt].getStateVector(),axis=1)
+                        xy[:,i_pnt] = np.squeeze(self.pnt_object_list[pnt].getStateVector(fx_flag),axis=1)
                         delete_indices.append(pnt)
                     
                     w = np.squeeze(P[selected_pnts,j])
@@ -212,14 +221,17 @@ class StaticTracker:
                     covP[3,3] = 5
                     covP[4,4] = 5
                     covP = covP * 10
+                    print("covP",covP)
                     f = np.poly1d(fit)
-                    polynom = {"f":f,"x_start":min(xy[0,:]),"x_end":max(xy[0,:]),"P": covP}
+                    if not fx_flag:
+                        print("Opening flipped polynom!!!")
+                    polynom = {"f":f,"x_start":min(xy[0,:]),"x_end":max(xy[0,:]),"P": covP, "fxFlag": fx_flag}
                     #print("polynom was generated!", polynom)
-                    status = self.trackInitExt(polynom, xy.T)
+                    status = self.trackInitExt(polynom, xy.T, fxFlag=fx_flag)
                     if status:
                         self.debug["pgpol"].append({"points": xy, "polynom":polynom})
-                    PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
-                PM = self.zeroOutAssociation(PM,None,j)
+                    
+                PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
             else:
                 break
                 
@@ -280,49 +292,50 @@ class StaticTracker:
             lat_distance = abs((c0[0]+c0[1]*xleft+c0[2]*xleft**2)-(c1[0]+c1[1]*xleft+c1[2]*xleft**2))
             overlap = xright-xleft
             #print("overlap", overlap, "trk width", x_trk[4]-x_trk[3], "cand_trk_width", x_cand[4]-x_cand[3], "lat_distance", lat_distance, "c0", c0, "c1", c1)
-            if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])) and lat_distance < 2:
+            if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])) and lat_distance < 3:
                 #print("inside condition", self.innerProductPolynoms(c0,c1,xleft,xright))
-                if(self.innerProductPolynoms(c0,c1,xleft,xright) > 0.5):
+                if(self.innerProductPolynoms(c0,c1,xleft,xright) < 10):
                     print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
         return False
-                
+     
+    @staticmethod
+    def getTrkPointsMatrix(pnt_object_list):
+        mat = np.zeros([len(pnt_object_list), 2])
+        for i, pnt in enumerate(pnt_object_list):
+            mat[i, :] = pnt.getStateVector().reshape(-1)
+            
+        return mat
     @staticmethod
     def createProbabilityMatrixExt(pnt_object_list, prior):
-        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1.5)
+        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1)
         #print("createProbabilityMatrixExt for prior", prior)
+        fx_flag = prior["fx"]
+        xthr = 2
+        lat_dist_to_prior_th = 2
         if pnt_object_list:
-            P = np.zeros((len(pnt_object_list),len(pnt_object_list)))
+            pnts_matrix = StaticTracker.getTrkPointsMatrix(pnt_object_list)
+            clus = DBSCAN(eps=4, min_samples=2).fit(pnts_matrix)
+            labels = clus.labels_ 
+            P = np.eye(len(pnt_object_list))
             for i,pnt_track in enumerate(pnt_object_list):
-                xi = pnt_track.getStateVector()
+                xi = pnt_track.getStateVector(fx_flag)
                 xmin, xmax = prior["xmin"], prior["xmax"]
                 c = prior["c"]
-                lat_dist_to_prior = abs(xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2)
-                if xi[0] >= xmin-8 and xi[0] <= xmax+8 and lat_dist_to_prior < 12:
-                    lat_pi = xi[1]-c[1]*xi[0]-c[2]*xi[0]**2
-                    squared_dist = np.array([np.sqrt((xi[0]-pnt.getStateVector()[0])**2+(xi[1]-pnt.getStateVector()[1])**2) for pnt in pnt_object_list])
-                    candidates_indices = np.argsort(np.squeeze(squared_dist))
-                    group_i = [i]
-                    for j in candidates_indices:
-                        if squared_dist[j] > 60:
-                            break
-                        if(i != j):
-                            xpj = pnt_object_list[j].getStateVector()
-                            kk = np.argmin(np.array([abs(xpj[0]-pnt_object_list[k].getStateVector()[0]) for k in group_i]))
-                            k = group_i[kk]
-                            xpk = pnt_object_list[k].getStateVector()
-                            if np.sqrt((xpk[0]-xpj[0])**2+(xpk[1]-xpj[1])**2) < 4:
-                                xpi = [xpk[0], lat_pi + c[1] * xpj[0] + c[2] * xpj[0]**2]
-                                Pj = pnt_object_list[j].getCovarianceMatrix()
-                                P[i,j] = ext_data_associator.calcLikelihood(xpi, xpj, Pj)
-                                if P[i,j]:
-                                    group_i.append(j)
-                            #else:
-                                #print(f"xpk={xpk} xpj={xpj}")
-                        else:
-                            P[i,j] = 1
-                else:
-                    P[i,:] = 0 
+                lat_dist_to_prior = xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2
+                if xi[0] >= xmin-xthr and xi[0] <= xmax+xthr and abs(lat_dist_to_prior) < lat_dist_to_prior_th:
+                    xarr = np.linspace(xmin-xthr,xmax+xthr,1000)
+                    yarr = c[0] + lat_dist_to_prior + c[1]*xarr + c[2]*xarr**2
+                    candidates_indices = np.where((labels[i] >= 0) & (labels==labels[i]))[0]
+                    if candidates_indices.size:
+                        for j in np.nditer(candidates_indices):
+                            if i != j:
+                                xpj = pnt_object_list[j].getStateVector(fx_flag)
+                                if xpj[0] >= xmin-2 and xpj[0] <= xmax+2:
+                                    a = np.argmin(np.sqrt((xarr-xpj[0])**2+(yarr-xpj[1])**2))
+                                    xk = [xarr[a],yarr[a]]
+                                    Pj = pnt_object_list[j].getCovarianceMatrix()
+                                    P[i,j] = ext_data_associator.calcLikelihood(xk, xpj, Pj)
                         
         return P
                     
@@ -376,17 +389,17 @@ class StaticTracker:
     def innerProductPolynoms(f1, f2, xmin, xmax):
         f1mf2 = P.polysub(f1,f2)
         f1mf2 = P.polymul(f1mf2,f1mf2)
-        val = P.polyint(f1mf2,lbnd=-xmin)
+        val = P.polyint(f1mf2,lbnd=xmin)
         #print(val)
-        ip = val[0] + val[1]*xmax+val[2]*xmax**2+val[3]*xmax**3+val[4]*xmax**4+val[5]*xmax**5
+        ip = val[0] + val[1]*(xmax-xmin)+val[2]*(xmax-xmin)**2+val[3]*(xmax-xmin)**3+val[4]*(xmax-xmin)**4+val[5]*(xmax-xmin)**5
         
-        return np.sqrt(ip)
+        return np.sqrt(ip)/(xmax-xmin)
 
     def getPolynoms(self):
         polynoms = []
         for trk in self.ext_object_list:
             x = trk.getStateVector()
-            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4],"static_cars_flag":trk.static_cars_flag})
+            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4],"fxFlag":trk.getFxFlag()})
             
         return polynoms
     

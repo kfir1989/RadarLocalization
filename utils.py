@@ -106,23 +106,35 @@ class PointObjectTrack:
         self.saver.to_array()
         return self.saver.x
     
-    def getStateVector(self):
-        return self.kf.x
+    def getStateVector(self, fxFlag=True):
+        if fxFlag:
+            return self.kf.x
+        else:
+            return np.flip(self.kf.x)
     
-    def getPredictedStateVector(self):
-        return self.kf.x_prior
+    def getPredictedStateVector(self, fxFlag=True):
+        if fxFlag:
+            return self.kf.x_prior
+        else:
+            return np.flip(self.kf.x_prior)
         
-    def getInnovationCovarianceMatrix(self):
-        return self.kf.S
+    def getInnovationCovarianceMatrix(self, fxFlag=True):
+        if fxFlag:
+            return self.kf.S
+        else:
+            return np.flip(self.kf.S)
     
-    def getCovarianceMatrix(self):
-        return self.kf.P_post
+    def getCovarianceMatrix(self, fxFlag=True):
+        if fxFlag:
+            return self.kf.P_post
+        else:
+            return np.flip(self.kf.P_post)
     
     def getLastUpdateFrameIdx(self):
         return self.last_update_frame_idx
         
 class ExtendedObjectTrack:
-    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995):
+    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995, fxFlag=True):
         self.kf = KalmanFilter(dim_x=5, dim_z=2)
         x0 = np.array([[5, 0, 0, 0, 0]]).T # a1, a2, a3, x_start, x_end
         P0 = np.diag([2, 1, 1, 20, 20]) #Initial state covariance matrix
@@ -143,6 +155,7 @@ class ExtendedObjectTrack:
         self.hits = [1]
         self.static_cars_flag = False
         self.counter_update = 0
+        self.fx_flag = fxFlag
         
     def predict(self):
         self.kf.predict()
@@ -185,3 +198,6 @@ class ExtendedObjectTrack:
         elements = np.array([x_elements, y_elements]).T
         
         return elements
+    
+    def getFxFlag(self):
+        return self.fx_flag

@@ -76,7 +76,10 @@ class SimulationVideo:
     def drawPrior(self, ax, priors, xlim, **kwargs):
         for prior in priors:
             x,y = createPolynom(prior["c"][0],prior["c"][1],prior["c"][2],xstart=prior["xmin"],xend=prior["xmax"])
-            ax.plot(y,x,**kwargs)
+            if prior["fx"]:
+                ax.plot(y,x,**kwargs)
+            else:
+                ax.plot(x,y,**kwargs)
         
     def save(self, idx, prior, measurements, points, polynoms, debug, pos=[0,0], heading=0):
         self.x_lim_min = min(min(self.x_lim_min, np.min(measurements["polynom"][:,1])), np.min(measurements["other"][:,1]))
@@ -111,7 +114,10 @@ class SimulationVideo:
         for polynom in polynoms:
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             y_plot = polynom["f"](x_plot)
-            self.ax[0,2].plot(y_plot,x_plot,linewidth=10)
+            if polynom["fxFlag"]:
+                self.ax[0,2].plot(y_plot,x_plot,linewidth=10)
+            else:
+                self.ax[0,2].plot(x_plot,y_plot,linewidth=10)
             
         self.ax[1,0].set_title("Points that generated a new polynom frame={}".format(idx))
         self.ax[1,0].set_xlim(xlim)
@@ -119,10 +125,15 @@ class SimulationVideo:
         self.drawPrior(ax=self.ax[1,0],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
         self.ax[1,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,0])
         for c,pair in enumerate(debug["pgpol"]):
+            
             x_plot = np.linspace(pair["polynom"]["x_start"], pair["polynom"]["x_end"], 100)
             y_plot = pair["polynom"]["f"](x_plot)
-            self.ax[1,0].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
-            self.ax[1,0].scatter(pair["points"][1,:], pair["points"][0,:],c=[self.colors[c]]*pair["points"].shape[1])
+            if pair["polynom"]["fxFlag"]:
+                self.ax[1,0].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                self.ax[1,0].scatter(pair["points"][1,:], pair["points"][0,:],c=[self.colors[c]]*pair["points"].shape[1])
+            else:
+                self.ax[1,0].plot(x_plot,y_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
             
         self.ax[1,1].set_title("Points that updated point tracks frame={}".format(idx))
         self.ax[1,1].set_xlim(xlim)
@@ -146,13 +157,20 @@ class SimulationVideo:
             for pair in debug["mupol"]:
                 if pair["id"] == upol:
                     if first:
-                        x_plot = np.linspace(pair["polynom"][3], pair["polynom"][4], 100)
-                        y_plot = pair["polynom"][0] + pair["polynom"][1]*x_plot + pair["polynom"][2]*x_plot**2
-                        self.ax[1,2].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                        if pair["fxFlag"]:
+                            x_plot = np.linspace(pair["polynom"][3], pair["polynom"][4], 100)
+                            y_plot = pair["polynom"][0] + pair["polynom"][1]*x_plot + pair["polynom"][2]*x_plot**2
+                        if pair["fxFlag"]:
+                            self.ax[1,2].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                        else:
+                            self.ax[1,2].plot(x_plot,y_plot,linewidth=3,linestyle='--',color=self.colors[c])
                         first = False
                     xy.append(np.array([pair["measurements"][0], pair["measurements"][1]]))
             xy = np.array(xy).T
-            self.ax[1,2].scatter(xy[1,:], xy[0,:],c=self.colors[c])
+            if pair["fxFlag"]:
+                self.ax[1,2].scatter(xy[1,:], xy[0,:],c=self.colors[c])
+            else:
+                self.ax[1,2].scatter(xy[0,:], xy[1,:],c=self.colors[c])
             
         self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.ax[0,0].clear()
@@ -385,15 +403,18 @@ class NuscenesVideoDebug:
             self.first_pos = pos
             
         self.ax[1,0].set_title("Points that generated a new polynom", fontsize=20)
-        print("xlim", xlim, "self.first_pos[0]", self.first_pos[0])
         self.ax[1,0].set_xlim([x-self.first_pos[0] for x in xlim])
         self.ax[1,0].set_ylim([y-self.first_pos[1] for y in ylim])
         self.ax[1,0] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[1,0])
         for c,pair in enumerate(debug["pgpol"]):
             x_plot = np.linspace(pair["polynom"]["x_start"], pair["polynom"]["x_end"], 100)
             y_plot = pair["polynom"]["f"](x_plot)
-            self.ax[1,0].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
-            self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
+            if pair["fx_flag"]:
+                self.ax[1,0].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
+            else:
+                self.ax[1,0].plot(x_plot,y_plot,linewidth=3,linestyle='--',color=self.colors[c])
+                self.ax[1,0].scatter(pair["points"][1,:], pair["points"][0,:],c=[self.colors[c]]*pair["points"].shape[1])
             
         self.ax[1,1].set_title("Points that updated point tracks", fontsize=20)
         self.ax[1,1].set_xlim([x-self.first_pos[0] for x in xlim])

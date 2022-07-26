@@ -82,7 +82,6 @@ def createPolynom(a1,a2,a3,xstart=0,xend=100):
 def generatePolynom(a1,a2,a3,n,xstart=0,xend=100):
     x = np.sort(np.asarray(np.random.random_sample(n)))
     x = (xend - xstart) * x + xstart
-    print("x",x)
     y = a3*x**2 + a2*x + a1
 
     return x, y

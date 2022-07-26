@@ -31,8 +31,8 @@ class DynamicSimulatedDataset(Dataset):
         N = kwargs.pop('N', 150)
         self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
         dR = kwargs.pop('dR', 0.4)
-        dAz = kwargs.pop('dAz', 0.05)
-        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 1) #1:1
+        dAz = kwargs.pop('dAz', 0.02)
+        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.2) #1:1
         seed = kwargs.pop('seed', None)
         self.__generateEgoMotion(x0=np.asarray(x0), v0=v0, a0=a0, path=self.prior[0], N=N, dT=0.1)
         self.dR, self.dAz, self.polynom_noise_ratio = dR, dAz, polynom_noise_ratio
@@ -44,18 +44,18 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
         xmin, xmax = 300, 0
         for prior in self.prior:
-            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=30)
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=40)
             z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
             xmin = min(xmin, np.min(z[:,0]))
             xmax = max(xmax, np.max(z[:,0]))
         
-        N_noise = self.polynom_noise_ratio * z.shape[0]
+        data_size = int(z.shape[0])
+        N_noise = int(self.polynom_noise_ratio * data_size)
         zp,dzp = self.__generateNoise(xRange=[xmin,xmax], dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=N_noise)
         z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
         
         zw, covw = self.__convert2WorldCoordinates(z, dz, self.R[:,:,t], self.t[:,t].reshape(2,1))
-        data_size = int(zw.shape[0]/2)
-
+        print("data_size",data_size,"zw.shape", zw.shape)
         video_data = {"polynom":zw[0:data_size,:],"dpolynom":covw[0:data_size,:,:], "other":zw[data_size:,:],"dother":covw[data_size:,:,:],
                      "pos":pos,"heading":heading}
         
@@ -64,16 +64,15 @@ class DynamicSimulatedDataset(Dataset):
         return zw, covw, prior, video_data
         
     def __generateData(self, prior, dR, dAz, pos, R, N=50):
+        if not prior[5]:
+            pos = np.array([-5,0])
         [_,_,x_poly,y_poly,polynom_cov] = generatePolynomNoisyPoints(N=N,a1=prior[0],a2=prior[1],a3=prior[2],dR=dR,dAz=dAz,xRange=[prior[3],prior[4]],pos=pos,R=np.linalg.inv(R))
         if prior[5]:
             z = np.array([x_poly, y_poly]).T
             dz = np.array(polynom_cov)
         else:
             z = np.array([y_poly, x_poly]).T
-            dz_tmp = np.array(polynom_cov)
-            dz = np.copy(dz_tmp).T
-            dz[:,0,0] = dz_tmp[:,1,1]
-            dz[:,1,1] = dz_tmp[:,0,0]
+            dz = np.flip(np.array(polynom_cov))
         
         return z,dz
     
@@ -94,7 +93,7 @@ class DynamicSimulatedDataset(Dataset):
     def __generatePrior(self, coeffList):
         prior_list = []
         for coeff in coeffList:
-            prior_list.append({"c": (coeff[0], coeff[1], coeff[2]), "xmin": coeff[3], "xmax": coeff[4]}, "fx":  coeff[5])
+            prior_list.append({"c": (coeff[0], coeff[1], coeff[2]), "xmin": coeff[3], "xmax": coeff[4], "fx": coeff[5]})
             
         return prior_list
             
