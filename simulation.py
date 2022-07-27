@@ -16,12 +16,16 @@ class DynamicSimulation():
         self.video = SimulationVideo()
     
     def run(self, N):
+        results = []
         for t in range(0,N):
             print(f"frame {t}")
             zw, covw, prior, video_data = self.dataset.getData(t)
             print("prior", prior)
             points, polynoms = self.model.run(zw,covw,prior)
             self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
+            results.append(polynoms)
+            
+        return results[1:]
             
 class NuscenesSimulation():
     def __init__(self, nusc, model, scene_id, **kwargs):

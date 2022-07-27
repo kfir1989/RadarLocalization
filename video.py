@@ -55,6 +55,7 @@ def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000):
 class SimulationVideo:
     def __init__(self):
         self.fig, self.ax = plt.subplots(2,3,figsize=(40,15))
+        self.fig2, self.ax2 = plt.subplots(1,3,figsize=(40,15))
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
         self.dir_name = f"images/simulation1/"
@@ -64,7 +65,7 @@ class SimulationVideo:
         self.y_lim_min = 0
         self.y_lim_max = 100
         
-    def drawEllipses(self, measurements, key1, key2, ax, n=5, edgecolor='firebrick'):
+    def drawEllipses(self, measurements, key1, key2, ax, n=10, edgecolor='firebrick'):
         ellipses = range(0,measurements[key1].shape[0])
         ellipses = random.sample(ellipses, n)
         for i in ellipses:
@@ -74,12 +75,12 @@ class SimulationVideo:
         return ax
     
     def drawPrior(self, ax, priors, xlim, **kwargs):
-        for prior in priors:
+        for idx,prior in enumerate(priors):
             x,y = createPolynom(prior["c"][0],prior["c"][1],prior["c"][2],xstart=prior["xmin"],xend=prior["xmax"])
             if prior["fx"]:
-                ax.plot(y,x,**kwargs)
+                ax.plot(y,x,label=f"polynom {idx}",**kwargs)
             else:
-                ax.plot(x,y,**kwargs)
+                ax.plot(x,y,label=f"polynom {idx}",**kwargs)
         
     def save(self, idx, prior, measurements, points, polynoms, debug, pos=[0,0], heading=0):
         self.x_lim_min = min(min(self.x_lim_min, np.min(measurements["polynom"][:,1])), np.min(measurements["other"][:,1]))
@@ -89,27 +90,51 @@ class SimulationVideo:
         
         xlim = [self.x_lim_min,self.x_lim_max]
         ylim = [self.y_lim_min,self.y_lim_max]
-        self.ax[0,0].set_title("Measurements frame={}".format(idx))
+        self.ax[0,0].set_title("Measurements frame={}".format(idx), fontsize=30)
         self.ax[0,0].scatter(measurements["polynom"][:,1],measurements["polynom"][:,0])
         self.ax[0,0].scatter(measurements["other"][:,1],measurements["other"][:,0])
-        self.ax[0,0] = self.drawEllipses(measurements=measurements,key1="polynom",key2="dpolynom",ax=self.ax[0,0],edgecolor='firebrick')
-        self.ax[0,0] = self.drawEllipses(measurements=measurements,key1="other",key2="dother",ax=self.ax[0,0],edgecolor='blue')
+        self.ax[0,0] = self.drawEllipses(measurements=measurements,key1="polynom",key2="dpolynom",n=20,ax=self.ax[0,0],edgecolor='firebrick')
+        self.ax[0,0] = self.drawEllipses(measurements=measurements,key1="other",key2="dother",n=10,ax=self.ax[0,0],edgecolor='blue')
         self.ax[0,0].set_xlim(xlim)
         self.ax[0,0].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,0],priors=prior,xlim=ylim,label='true',linewidth=5)
+        self.drawPrior(ax=self.ax[0,0],priors=prior,xlim=ylim,linewidth=5)
         self.ax[0,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,0],edgecolor='red')
         
-        self.ax[0,1].set_title("Point tracks frame={}".format(idx))
+        
+        self.ax2[0].set_title("Measurements frame={}".format(idx), fontsize=30)
+        self.ax2[0].scatter(measurements["polynom"][:,1],measurements["polynom"][:,0],label='polynom measurements')
+        self.ax2[0].scatter(measurements["other"][:,1],measurements["other"][:,0], label='random noise')
+        self.ax2[0] = self.drawEllipses(measurements=measurements,key1="polynom",key2="dpolynom",n=20,ax=self.ax2[0],edgecolor='firebrick')
+        self.ax2[0] = self.drawEllipses(measurements=measurements,key1="other",n=10,key2="dother",ax=self.ax2[0],edgecolor='blue')
+        self.ax2[0].set_xlim(xlim)
+        self.ax2[0].set_ylim(ylim)
+        self.drawPrior(ax=self.ax2[0],priors=prior,xlim=ylim,linewidth=5)
+        self.ax2[0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax2[0],edgecolor='red')
+        self.ax2[0].set_xlabel('x [m]', fontsize=20)
+        self.ax2[0].set_ylabel('y [m]', fontsize=20)
+        self.ax2[0].legend(loc="upper left")
+        
+        self.ax[0,1].set_title("Point tracks frame={}".format(idx), fontsize=30)
         self.ax[0,1].scatter(points[:,1], points[:,0])
         self.ax[0,1].set_xlim(xlim)
         self.ax[0,1].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,1],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--')
+        self.drawPrior(ax=self.ax[0,1],priors=prior,xlim=ylim,linewidth=3,linestyle='--')
         self.ax[0,1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,1])
         
-        self.ax[0,2].set_title("Extended tracks frame={}".format(idx))
+        self.ax2[1].set_title("Point tracks frame={}".format(idx), fontsize=30)
+        self.ax2[1].scatter(points[:,1], points[:,0])
+        self.ax2[1].set_xlim(xlim)
+        self.ax2[1].set_ylim(ylim)
+        self.drawPrior(ax=self.ax2[1],priors=prior,xlim=ylim,linewidth=3,linestyle='--')
+        self.ax2[1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax2[1])
+        self.ax2[1].set_xlabel('x [m]', fontsize=20)
+        self.ax2[1].set_ylabel('y [m]', fontsize=20)
+        self.ax2[1].legend(loc="upper left")
+        
+        self.ax[0,2].set_title("Extended tracks frame={}".format(idx), fontsize=30)
         self.ax[0,2].set_xlim(xlim)
         self.ax[0,2].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[0,2],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[0,2],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
         self.ax[0,2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,2],edgecolor='red')
         for polynom in polynoms:
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
@@ -118,11 +143,29 @@ class SimulationVideo:
                 self.ax[0,2].plot(y_plot,x_plot,linewidth=10)
             else:
                 self.ax[0,2].plot(x_plot,y_plot,linewidth=10)
+                
+        
+        self.ax2[2].set_title("Extended tracks frame={}".format(idx), fontsize=30)
+        self.ax2[2].set_xlim(xlim)
+        self.ax2[2].set_ylim(ylim)
+        self.drawPrior(ax=self.ax2[2],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
+        self.ax2[2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax2[2],edgecolor='red')
+        for ipol,polynom in enumerate(polynoms):
+            x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            y_plot = polynom["f"](x_plot)
+            if polynom["fxFlag"]:
+                self.ax2[2].plot(y_plot,x_plot,linewidth=10,label=f"track {ipol}")
+            else:
+                self.ax2[2].plot(x_plot,y_plot,linewidth=10,label=f"track {ipol}")
+                
+        self.ax2[2].set_xlabel('x [m]', fontsize=20)
+        self.ax2[2].set_ylabel('y [m]', fontsize=20)
+        self.ax2[2].legend(loc="upper left")
             
-        self.ax[1,0].set_title("Points that generated a new polynom frame={}".format(idx))
+        self.ax[1,0].set_title("Points that generated a new polynom frame={}".format(idx), fontsize=30)
         self.ax[1,0].set_xlim(xlim)
         self.ax[1,0].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,0],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,0],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
         self.ax[1,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,0])
         for c,pair in enumerate(debug["pgpol"]):
             
@@ -135,19 +178,19 @@ class SimulationVideo:
                 self.ax[1,0].plot(x_plot,y_plot,linewidth=3,linestyle='--',color=self.colors[c])
                 self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
             
-        self.ax[1,1].set_title("Points that updated point tracks frame={}".format(idx))
+        self.ax[1,1].set_title("Points that updated point tracks frame={}".format(idx), fontsize=30)
         self.ax[1,1].set_xlim(xlim)
         self.ax[1,1].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,1],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,1],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
         self.ax[1,1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,1])
         for pair in debug["mupoi"]:
             self.ax[1,1].scatter(pair["measurements"][1], pair["measurements"][0],color='blue')
             self.ax[1,1].scatter(pair["points"][1], pair["points"][0],color='orange')
             
-        self.ax[1,2].set_title("Points that updated extended tracks frame={}".format(idx))
+        self.ax[1,2].set_title("Points that updated extended tracks frame={}".format(idx), fontsize=30)
         self.ax[1,2].set_xlim(xlim)
         self.ax[1,2].set_ylim(ylim)
-        self.drawPrior(ax=self.ax[1,2],priors=prior,xlim=ylim,label='true',linewidth=3,linestyle='--') 
+        self.drawPrior(ax=self.ax[1,2],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
         self.ax[1,2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[1,2])
         unique_polynoms = set(d['id'] for d in debug["mupol"])
         print("len(unique_polynoms)", len(unique_polynoms))
@@ -171,14 +214,19 @@ class SimulationVideo:
                 self.ax[1,2].scatter(xy[1,:], xy[0,:],c=self.colors[c])
             else:
                 self.ax[1,2].scatter(xy[0,:], xy[1,:],c=self.colors[c])
-            
+      
+  
         self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
+        self.fig2.savefig(os.path.join(self.dir_name, f'papertrack_{idx}.png'))
         self.ax[0,0].clear()
         self.ax[0,1].clear()
         self.ax[0,2].clear()
         self.ax[1,0].clear()
         self.ax[1,1].clear()
         self.ax[1,2].clear()
+        self.ax2[0].clear()
+        self.ax2[1].clear()
+        self.ax2[2].clear()
         
     def generate(self, name, fps=1):
         image_folder = "images"

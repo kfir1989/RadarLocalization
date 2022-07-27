@@ -22,49 +22,10 @@ class StaticTracker:
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
-    def rotateCoordinateSystem(self,z,dz,prior,rotate=False,rotate_back=False,rotate_all=False):
-        if rotate_all:
-            for ext_track in self.ext_object_list:
-                ext_track.rotate90()
-                    
-            for pnt_track in self.pnt_object_list:
-                pnt_track.rotate90()
-                
-        if rotate:
-            z = z[:, [1,0]]
-            dz = z[:, [1,0], [1,0]]
-            (a0,a1,a2) = prior
-            #rotate by 90 degrees - x ---> y', y---->-x'
-            x = np.array([1,2,3])
-            y = np.array([a0+a1*x[0]+a2*x[0]**2,a0+a1*x[1]+a2*x[1]**2,a0+a1*x[2]+a2*x[2]**2])
-            A = [[1, -y[0],y[0]**2],[1, -y[1], y[1]**2],[1, -y[2], y[2]**2]]
-            co = np.linalg.inv(A).dot(x)
-            prior = (c0[0],c0[1],c0[2])
-            
-        if rotate_back:
-            for ext_track in self.ext_object_list:
-                ext_track.rotateback90()
-                    
-            for pnt_track in self.pnt_object_list:
-                pnt_track.rotateback90()
-            
-                
-    def checkRotation(self,z,dz,prior):
-        if prior[1] > self.max_decline_factor:
-            z, dz, prior = self.rotateCoordinateSystem(z,dz,prior,rotate=True,rotate_all=(not self.system_rotated_flag))
-            if not self.rotate_system_flag:
-                self.system_rotated_flag = True
-        elif self.system_rotated_flag:
-            z, dz, prior = self.rotateCoordinateSystem(z,dz,prior,rotate_back=True)
-            self.system_rotated_flag = False
-            
-        return z,dz,prior
-        
     def getDebugInfo(self):
         return self.debug
         
     def run(self, z, dz, prior):
-        print("start tracker...")
         self.frame_idx += 1
         self.debug = {"pgpol": [], "mupoi": [], "mupol": []}
         print("Number of point tracks before run()", len(self.pnt_object_list))
@@ -80,11 +41,9 @@ class StaticTracker:
         z, dz = self.trackUpdate(z, dz, Ge, Gp)
         self.trackInitPnt(z,dz)
             
-        if self.frame_idx > 1:
+        if self.frame_idx > 2:
             self.generateExtObject(prior)
-        self.trackMaintenance()
-        
-        print("end tracker...")
+        self.trackMaintenance()     
         
         return self.getPoints(), self.getPolynoms()
         
@@ -221,7 +180,6 @@ class StaticTracker:
                     covP[3,3] = 5
                     covP[4,4] = 5
                     covP = covP * 10
-                    print("covP",covP)
                     f = np.poly1d(fit)
                     if not fx_flag:
                         print("Opening flipped polynom!!!")
