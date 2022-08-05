@@ -6,6 +6,7 @@ from utils import *
 import detector
 import scipy
 from sklearn.cluster import DBSCAN
+from scipy.spatial.distance import cdist
     
 class StaticTracker:
     def __init__(self):
@@ -250,7 +251,7 @@ class StaticTracker:
             lat_distance = abs((c0[0]+c0[1]*xleft+c0[2]*xleft**2)-(c1[0]+c1[1]*xleft+c1[2]*xleft**2))
             overlap = xright-xleft
             #print("overlap", overlap, "trk width", x_trk[4]-x_trk[3], "cand_trk_width", x_cand[4]-x_cand[3], "lat_distance", lat_distance, "c0", c0, "c1", c1)
-            if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])) and lat_distance < 3:
+            if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])):# and lat_distance < 5:
                 #print("inside condition", self.innerProductPolynoms(c0,c1,xleft,xright))
                 if(self.innerProductPolynoms(c0,c1,xleft,xright) < 10):
                     print("Tracks are similar! do not open a new trk", c0, c1)
@@ -258,42 +259,120 @@ class StaticTracker:
         return False
      
     @staticmethod
-    def getTrkPointsMatrix(pnt_object_list):
+    def getTrkPointsMatrix(pnt_object_list,fx_flag):
         mat = np.zeros([len(pnt_object_list), 2])
         for i, pnt in enumerate(pnt_object_list):
-            mat[i, :] = pnt.getStateVector().reshape(-1)
+            mat[i, :] = pnt.getStateVector(fx_flag).reshape(-1)
             
         return mat
     @staticmethod
-    def createProbabilityMatrixExt(pnt_object_list, prior):
+    def createProbabilityMatrixExt_old(pnt_object_list, prior):
         ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1)
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
         xthr = 2
         lat_dist_to_prior_th = 2
         if pnt_object_list:
-            pnts_matrix = StaticTracker.getTrkPointsMatrix(pnt_object_list)
-            clus = DBSCAN(eps=4, min_samples=2).fit(pnts_matrix)
+            M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
+            clus = DBSCAN(eps=4, min_samples=2).fit(M)
             labels = clus.labels_ 
             P = np.eye(len(pnt_object_list))
-            for i,pnt_track in enumerate(pnt_object_list):
-                xi = pnt_track.getStateVector(fx_flag)
-                xmin, xmax = prior["xmin"], prior["xmax"]
+            for i in range(M.shape[0]):
+                xi = M[i,:]
+                xmin, xmax = prior["xmin"]-xthr, prior["xmax"]+xthr
                 c = prior["c"]
                 lat_dist_to_prior = xi[1]-c[0]-c[1]*xi[0]-c[2]*xi[0]**2
-                if xi[0] >= xmin-xthr and xi[0] <= xmax+xthr and abs(lat_dist_to_prior) < lat_dist_to_prior_th:
+                if xi[0] >= xmin and xi[0] <= xmax and abs(lat_dist_to_prior) < lat_dist_to_prior_th:
                     xarr = np.linspace(xmin-xthr,xmax+xthr,1000)
                     yarr = c[0] + lat_dist_to_prior + c[1]*xarr + c[2]*xarr**2
                     candidates_indices = np.where((labels[i] >= 0) & (labels==labels[i]))[0]
                     if candidates_indices.size:
                         for j in np.nditer(candidates_indices):
                             if i != j:
-                                xpj = pnt_object_list[j].getStateVector(fx_flag)
-                                if xpj[0] >= xmin-2 and xpj[0] <= xmax+2:
+                                xpj = M[j,:]
+                                if xpj[0] >= xmin and xpj[0] <= xmax:
                                     a = np.argmin(np.sqrt((xarr-xpj[0])**2+(yarr-xpj[1])**2))
                                     xk = [xarr[a],yarr[a]]
                                     Pj = pnt_object_list[j].getCovarianceMatrix()
                                     P[i,j] = ext_data_associator.calcLikelihood(xk, xpj, Pj)
+                        
+        return P
+    
+    @staticmethod
+    def findClosestPoint(M, prior):
+        x = np.linspace(prior["xmin"],prior["xmax"],(round(prior["xmax"]-prior["xmin"])+1)*10)
+        c = prior["c"]
+        y = c[0] + c[1]*x + c[2]*x**2
+        pol = np.array([x,y]).T
+        #print("M and pol shape", M.shape, pol.shape)
+        dists = cdist(M, pol)
+        ind = np.argmin(dists,axis=1)
+        return pol[ind,:]
+    
+    def findPointOnHypotheticalCurve(xpj, Dj, xmin, xmax, lpk, direction):
+        if xpj[0] > Dj[0]:
+            m = (xpj[1]-Dj[1])/(xpj[0]-Dj[0]+1e-6)
+        else:
+            m = (Dj[1]-xpj[1])/(Dj[0]-xpj[0]+1e-6)
+
+        x_bool = xpj[0] > Dj[0]
+        y_bool = xpj[1] > Dj[1]
+        if (direction ^ x_bool ^ y_bool):
+            xmin = Dj[0]
+        else:
+            xmax = Dj[0]
+        n = xpj[1]- m*xpj[0]
+        xx = np.linspace(xmin, xmax, round(xmax-xmin)*100)
+        yy = m*xx+n
+        line = np.array([xx,yy]).T
+        Dj = Dj.reshape(1,-1)
+        #print("Dj",Dj.shape, line.shape)
+        dists = np.abs(cdist(Dj, line) - lpk)
+        ind = np.argmin(dists, axis=1)
+        
+        #print("line[ind,:]",line[ind,:])
+        
+        return line[ind,:].T
+        
+    
+    @staticmethod
+    def createProbabilityMatrixExt(pnt_object_list, prior):
+        pnt_data_associator = PointObjectDataAssociator(delta=5)
+        #print("createProbabilityMatrixExt for prior", prior)
+        fx_flag = prior["fx"]
+        xthr = 2
+        lat_dist_to_prior_th = 5
+        if pnt_object_list:
+            M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
+            D = StaticTracker.findClosestPoint(M, prior)
+            clus = DBSCAN(eps=4, min_samples=2).fit(M)
+            labels = clus.labels_ 
+            P = np.eye(len(pnt_object_list))
+            for i in range(M.shape[0]):
+                xi = M[i,:]
+                xmin, xmax = prior["xmin"]-xthr, prior["xmax"]+xthr
+                c = prior["c"]
+                lpk = np.linalg.norm(xi-D[i,:])
+                direction = xi[1]-D[i,1] > 0
+                if xi[0] >= xmin and xi[0] <= xmax and lpk < lat_dist_to_prior_th:
+                    candidates_indices = np.where((labels[i] >= 0) & (labels==labels[i]))[0]
+                    if candidates_indices.size:
+                        squared_dist = np.linalg.norm(M[candidates_indices,:]-M[i,:],axis=1)
+                        sort_idx = np.argsort(np.squeeze(squared_dist))
+                        group_i = [i]
+                        for j in np.nditer(candidates_indices[sort_idx]):
+                            if i != j:
+                                xpj = M[j,:].reshape(-1,1)
+                                kk = np.argmin(np.array([np.abs(xpj[0]-M[k,0]) for k in group_i]))
+                                k = group_i[kk]
+                                xpk = M[k,:].reshape(-1,1)
+                                sqr_dist = np.linalg.norm(xpk-xpj)
+                                if sqr_dist < 3:
+                                    xij = StaticTracker.findPointOnHypotheticalCurve(xpj, D[j,:], xmin, xmax, lpk, direction)
+                                    Pj = pnt_object_list[j].getCovarianceMatrix(fx_flag)
+                                    P[i,j] = pnt_data_associator.calcLikelihood(xij, xpj, Pj)
+                                    if P[i,j]:
+                                        group_i.append(j)
                         
         return P
                     

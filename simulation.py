@@ -22,10 +22,11 @@ class DynamicSimulation():
             zw, covw, prior, video_data = self.dataset.getData(t)
             print("prior", prior)
             points, polynoms = self.model.run(zw,covw,prior)
+            prior = [{"c": (27.5,-5,0.3), "xmin": 7, "xmax": 16.1,"fx": True}]
             self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
             results.append(polynoms)
             
-        return results[1:]
+        return results
             
 class NuscenesSimulation():
     def __init__(self, nusc, model, scene_id, **kwargs):

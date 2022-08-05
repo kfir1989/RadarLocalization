@@ -35,7 +35,7 @@ class PointObjectDataAssociator():
         
         
 class ExtObjectDataAssociator():
-    def __init__(self, dim=2,deltaL=1,deltaS=4,deltaE=4):
+    def __init__(self, dim=2,deltaL=1,deltaS=2,deltaE=2):
         self.deltaL = deltaL
         self.deltaS = deltaS # delta x start
         self.deltaE = deltaL # delta x end
@@ -134,7 +134,7 @@ class PointObjectTrack:
         return self.last_update_frame_idx
         
 class ExtendedObjectTrack:
-    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995, fxFlag=True):
+    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.99, fxFlag=True):
         self.kf = KalmanFilter(dim_x=5, dim_z=2)
         x0 = np.array([[5, 0, 0, 0, 0]]).T # a1, a2, a3, x_start, x_end
         P0 = np.diag([2, 1, 1, 20, 20]) #Initial state covariance matrix

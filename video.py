@@ -60,10 +60,10 @@ class SimulationVideo:
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
         self.dir_name = f"images/simulation1/"
         os.system("mkdir -p " + self.dir_name)
-        self.x_lim_min = -50
-        self.x_lim_max = 50
+        self.x_lim_min = -20
+        self.x_lim_max = 20
         self.y_lim_min = 0
-        self.y_lim_max = 100
+        self.y_lim_max = 40
         
     def drawEllipses(self, measurements, key1, key2, ax, n=10, edgecolor='firebrick'):
         ellipses = range(0,measurements[key1].shape[0])
@@ -101,6 +101,7 @@ class SimulationVideo:
         self.ax[0,0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,0],edgecolor='red')
         
         
+        self.ax2[0].axis('scaled')
         self.ax2[0].set_title("Measurements frame={}".format(idx), fontsize=30)
         self.ax2[0].scatter(measurements["polynom"][:,1],measurements["polynom"][:,0],label='polynom measurements')
         self.ax2[0].scatter(measurements["other"][:,1],measurements["other"][:,0], label='random noise')
@@ -114,6 +115,7 @@ class SimulationVideo:
         self.ax2[0].set_ylabel('y [m]', fontsize=20)
         self.ax2[0].legend(loc="upper left")
         
+        
         self.ax[0,1].set_title("Point tracks frame={}".format(idx), fontsize=30)
         self.ax[0,1].scatter(points[:,1], points[:,0])
         self.ax[0,1].set_xlim(xlim)
@@ -121,6 +123,7 @@ class SimulationVideo:
         self.drawPrior(ax=self.ax[0,1],priors=prior,xlim=ylim,linewidth=3,linestyle='--')
         self.ax[0,1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=self.ax[0,1])
         
+        self.ax2[1].axis('scaled')
         self.ax2[1].set_title("Point tracks frame={}".format(idx), fontsize=30)
         self.ax2[1].scatter(points[:,1], points[:,0])
         self.ax2[1].set_xlim(xlim)
@@ -130,6 +133,7 @@ class SimulationVideo:
         self.ax2[1].set_xlabel('x [m]', fontsize=20)
         self.ax2[1].set_ylabel('y [m]', fontsize=20)
         self.ax2[1].legend(loc="upper left")
+        
         
         self.ax[0,2].set_title("Extended tracks frame={}".format(idx), fontsize=30)
         self.ax[0,2].set_xlim(xlim)
@@ -146,6 +150,7 @@ class SimulationVideo:
                 
         
         self.ax2[2].set_title("Extended tracks frame={}".format(idx), fontsize=30)
+        self.ax2[2].axis('scaled')
         self.ax2[2].set_xlim(xlim)
         self.ax2[2].set_ylim(ylim)
         self.drawPrior(ax=self.ax2[2],priors=prior,xlim=ylim,linewidth=3,linestyle='--') 
@@ -161,6 +166,7 @@ class SimulationVideo:
         self.ax2[2].set_xlabel('x [m]', fontsize=20)
         self.ax2[2].set_ylabel('y [m]', fontsize=20)
         self.ax2[2].legend(loc="upper left")
+        
             
         self.ax[1,0].set_title("Points that generated a new polynom frame={}".format(idx), fontsize=30)
         self.ax[1,0].set_xlim(xlim)

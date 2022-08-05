@@ -98,7 +98,7 @@ def generatePolynomNoisyPoints(N, a1, a2, a3, dR, dAz, xRange=[0,100], pos=[0,0]
     x = new_pos[0,:]
     y = new_pos[1,:]
     R = np.sqrt(x**2+y**2)
-    Az = np.arctan(y/x)
+    Az = np.arctan2(y,x)
     cov = errorPropagation(R,Az,dR,dAz)
     r_noisy = R + dR * np.random.randn(R.shape[0])
     az_noisy = Az + dAz * np.random.randn(Az.shape[0])
