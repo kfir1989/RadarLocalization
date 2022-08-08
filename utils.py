@@ -44,10 +44,21 @@ class ExtObjectDataAssociator():
     def distance(self, x, u, P):
         return (x-u).T*np.linalg.inv(P)*(x-u)
         
-    def gating(self, u, y, y_pred, S_pred, x):
+    def gating_old(self, u, y, y_pred, S_pred, x):
         quad_dist = (y-y_pred)**2
         P_inv = 1 / S_pred
         return (x[3]-self.deltaS) < u and (x[4]+self.deltaE) > u and (quad_dist * P_inv <= self.deltaL)
+    
+    def gating(self, u, y, y_pred, S_pred, x):
+        quad_dist = (y-y_pred)**2
+        P_inv = 1 / S_pred
+        
+        dist = 0
+        if u < x[3]:
+            dist = math.sqrt((x[3]-u)**2+(x[0]+x[1]*x[3]+x[2]*x[3]**2-y)**2)
+        elif u > x[4]:
+            dist = math.sqrt((x[4]-u)**2+(x[0]+x[1]*x[4]+x[2]*x[4]**2-y)**2)
+        return dist < 3 and (quad_dist * P_inv <= self.deltaL)
         
     def calcLikelihood(self, u, y, y_pred, S_pred, x):
         if self.gating(u, y, y_pred, S_pred, x):

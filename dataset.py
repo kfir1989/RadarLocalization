@@ -30,7 +30,7 @@ class DynamicSimulatedDataset(Dataset):
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
         self.prior2 = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        self.prior = [(27.5,-5,0.3,10,16.1,True)]
+        self.prior = [(27.5,-5,0.3,5,16,True)]
         dR = kwargs.pop('dR', 0.4)
         dAz = kwargs.pop('dAz', 0.02)
         polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.2) #1:1
@@ -57,7 +57,7 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
         
         zw, covw = self.__convert2WorldCoordinates(z, dz, self.R[:,:,t], self.t[:,t].reshape(2,1))
-        print("data_size",data_size,"zw.shape", zw.shape)
+        #print("data_size",data_size,"zw.shape", zw.shape)
         video_data = {"polynom":zw[0:data_size,:],"dpolynom":covw[0:data_size,:,:], "other":zw[data_size:,:],"dother":covw[data_size:,:,:],
                      "pos":pos,"heading":heading}
         
@@ -68,7 +68,6 @@ class DynamicSimulatedDataset(Dataset):
     def __generateData(self, prior, dR, dAz, pos, R, N=50):
         #if not prior[5]:
             #pos = np.array([-5,0])
-        print("[prior[3],prior[4]]",[prior[3],prior[4]],pos)
         [_,_,x_poly,y_poly,polynom_cov] = generatePolynomNoisyPoints(N=N,a1=prior[0],a2=prior[1],a3=prior[2],dR=dR,dAz=dAz,xRange=[prior[3],prior[4]],pos=pos,R=np.linalg.inv(R))
         if prior[5]:
             z = np.array([x_poly, y_poly]).T
@@ -77,7 +76,6 @@ class DynamicSimulatedDataset(Dataset):
             z = np.array([y_poly, x_poly]).T
             dz = np.flip(np.array(polynom_cov))
         
-        print("z",z)
         return z,dz
     
     def __generateNoise(self, xRange, dR, dAz, pos, R, N=50):

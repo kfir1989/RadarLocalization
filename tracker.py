@@ -18,8 +18,8 @@ class StaticTracker:
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 8
-        self.ext_max_non_update_iterations = 10
+        self.pnt_max_non_update_iterations = 5
+        self.ext_max_non_update_iterations = 6
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -83,6 +83,7 @@ class StaticTracker:
             Ge[i_meas, :] = 0 # Clear from extended association matrix, only measurement!
             x, y = z[i_meas]
             cov = np.diag([dz[i_meas][0,0], dz[i_meas][1,1]])
+            #cov = dz[i_meas][:,:]
             assigned_meas_list.append(i_meas)
             ratio = np.sqrt(lp)/le
             #print("lp",lp,"le",le)
@@ -96,6 +97,7 @@ class StaticTracker:
                 trk = self.ext_object_list[i_trk]
                 x = x if trk.getFxFlag() else z[i_meas][1]
                 y = y if trk.getFxFlag() else z[i_meas][0]
+                #cov = cov if trk.getFxFlag() else cov.flip()
                 trk.counter_update += 1
                 Hse = np.array([1 if x < trk.getStateVector()[3] else 0, 1 if x > trk.getStateVector()[4] else 0])
                 H = np.array([[0, 0, 0, Hse[0], Hse[1]],[1, x, x**2, 0, 0]])
@@ -163,7 +165,7 @@ class StaticTracker:
                     for i_pnt, pnt in enumerate(selected_pnts[0]):
                         #print("i_pnt", pnt)
                         xy[:,i_pnt] = np.squeeze(self.pnt_object_list[pnt].getStateVector(fx_flag),axis=1)
-                        delete_indices.append(pnt)
+                        #delete_indices.append(pnt)
                     
                     w = np.squeeze(P[selected_pnts,j])
                     #print(w.shape)
@@ -188,6 +190,7 @@ class StaticTracker:
                     #print("polynom was generated!", polynom)
                     status = self.trackInitExt(polynom, xy.T, fxFlag=fx_flag)
                     if status:
+                        delete_indices.append(selected_pnts[0])
                         self.debug["pgpol"].append({"points": xy, "polynom":polynom})
                     
                 PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
@@ -234,28 +237,20 @@ class StaticTracker:
         
     def isTrkSimilar(self, x_cand):
         similar = False
-        trns = np.array([x_cand[3], x_cand[0]+x_cand[1]*x_cand[3]+x_cand[2]*x_cand[3]**2])
-        rot = abs(x_cand[1]) > 2
-        #print("before x_cand=", x_cand, trns, rot)
-        x_cand = self.translatePolynom(x_cand, trns, rot)
-        #print("after x_cand=", x_cand, trns, rot)
         for trk in self.ext_object_list:
             x_trk = trk.getStateVector()
-            #print("before x_trk=", x_trk)
-            x_trk = self.translatePolynom(x_trk, trns, rot)
-            #print("after x_trk=", x_trk)
-            c0 = (x_trk[0], x_trk[1], x_trk[2])
-            c1 = (x_cand[0], x_cand[1], x_cand[2])
+            c0 = (x_trk[2], x_trk[1], x_trk[0])
+            c1 = (x_cand[2], x_cand[1], x_cand[0])
             xright = min(x_trk[4],x_cand[4])
             xleft = max(x_trk[3],x_cand[3])
             lat_distance = abs((c0[0]+c0[1]*xleft+c0[2]*xleft**2)-(c1[0]+c1[1]*xleft+c1[2]*xleft**2))
             overlap = xright-xleft
-            #print("overlap", overlap, "trk width", x_trk[4]-x_trk[3], "cand_trk_width", x_cand[4]-x_cand[3], "lat_distance", lat_distance, "c0", c0, "c1", c1)
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])):# and lat_distance < 5:
-                #print("inside condition", self.innerProductPolynoms(c0,c1,xleft,xright))
-                if(self.innerProductPolynoms(c0,c1,xleft,xright) < 10):
+                dist = self.innerProductPolynoms(c0,c1,xleft,xright)
+                if dist < 10:
                     print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
+                print("dist is", dist, " not similar!", c0, c1, xleft, xright)
         return False
      
     @staticmethod
@@ -267,7 +262,7 @@ class StaticTracker:
         return mat
     @staticmethod
     def createProbabilityMatrixExt_old(pnt_object_list, prior):
-        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=1)
+        ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=2)
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
         xthr = 2
@@ -309,7 +304,7 @@ class StaticTracker:
         ind = np.argmin(dists,axis=1)
         return pol[ind,:]
     
-    def findPointOnHypotheticalCurve(xpj, Dj, xmin, xmax, lpk, direction):
+    def findPointOnHypotheticalCurve_old(xpj, Dj, xmin, xmax, lpk, direction):
         if xpj[0] > Dj[0]:
             m = (xpj[1]-Dj[1])/(xpj[0]-Dj[0]+1e-6)
         else:
@@ -333,15 +328,34 @@ class StaticTracker:
         #print("line[ind,:]",line[ind,:])
         
         return line[ind,:].T
+    
+    def findPointOnHypotheticalCurve(xpj, a0, a1, a2, xstart, xend, offset):
+        C = StaticTracker.createParallelCurve(a0, a1, a2, xstart, xend, offset)
+        ind = np.argmin(cdist(xpj.T, C))
+        #print("a0",a0,"a1",a1,"a2",a2,"offset", offset, "xpj",xpj, "C[ind, :]", C[ind, :], C[ind, :].shape)
         
+        return C[ind, :].reshape(-1,1)
+        
+    @staticmethod
+    def createParallelCurve(a0,a1,a2,xstart,xend,offset):
+        t = np.arange(xstart,xend, 0.05)
+        denom = np.sqrt(1+(2 * a2 * t + a1)**2)
+        x = t+offset*(2 * a2 * t + a1) / denom
+        y = a0+a1*t+a2*t**2 - offset / denom
+        C = np.array([x,y])
+        
+        return C.T
     
     @staticmethod
     def createProbabilityMatrixExt(pnt_object_list, prior):
-        pnt_data_associator = PointObjectDataAssociator(delta=5)
+        pnt_data_associator = PointObjectDataAssociator(delta=3)
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
         xthr = 2
         lat_dist_to_prior_th = 5
+        #print("\n\nDEBUG!!!!\n\n")
+        #print("Curve is", StaticTracker.createParallelCurve(prior["c"][0],prior["c"][1],prior["c"][2],prior["xmin"],prior["xmax"],0))
+        #print("\n\n\n")
         if pnt_object_list:
             M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             D = StaticTracker.findClosestPoint(M, prior)
@@ -353,7 +367,7 @@ class StaticTracker:
                 xmin, xmax = prior["xmin"]-xthr, prior["xmax"]+xthr
                 c = prior["c"]
                 lpk = np.linalg.norm(xi-D[i,:])
-                direction = xi[1]-D[i,1] > 0
+                direction = -1 if xi[1]-D[i,1] > 0 else 1
                 if xi[0] >= xmin and xi[0] <= xmax and lpk < lat_dist_to_prior_th:
                     candidates_indices = np.where((labels[i] >= 0) & (labels==labels[i]))[0]
                     if candidates_indices.size:
@@ -368,7 +382,8 @@ class StaticTracker:
                                 xpk = M[k,:].reshape(-1,1)
                                 sqr_dist = np.linalg.norm(xpk-xpj)
                                 if sqr_dist < 3:
-                                    xij = StaticTracker.findPointOnHypotheticalCurve(xpj, D[j,:], xmin, xmax, lpk, direction)
+                                    #xij = StaticTracker.findPointOnHypotheticalCurve(xpj, D[j,:], xmin, xmax, lpk, direction)
+                                    xij = StaticTracker.findPointOnHypotheticalCurve(xpj, c[0], c[1], c[2], xmin, xmax, direction * lpk)
                                     Pj = pnt_object_list[j].getCovarianceMatrix(fx_flag)
                                     P[i,j] = pnt_data_associator.calcLikelihood(xij, xpj, Pj)
                                     if P[i,j]:
@@ -423,14 +438,27 @@ class StaticTracker:
         return P
 
     @staticmethod
-    def innerProductPolynoms(f1, f2, xmin, xmax):
+    def innerProductPolynoms_old(f1, f2, xmin, xmax):
         f1mf2 = P.polysub(f1,f2)
         f1mf2 = P.polymul(f1mf2,f1mf2)
         val = P.polyint(f1mf2,lbnd=xmin)
         #print(val)
-        ip = val[0] + val[1]*(xmax-xmin)+val[2]*(xmax-xmin)**2+val[3]*(xmax-xmin)**3+val[4]*(xmax-xmin)**4+val[5]*(xmax-xmin)**5
+        ip = abs(val[0] + val[1]*(xmax-xmin)+val[2]*(xmax-xmin)**2+val[3]*(xmax-xmin)**3+val[4]*(xmax-xmin)**4+val[5]*(xmax-xmin)**5)
         
         return np.sqrt(ip)/(xmax-xmin)
+    
+    @staticmethod
+    def innerProductPolynoms(f1, f2, xmin, xmax):
+        dx = 0.05
+        x = np.arange(xmin,xmax,dx)
+        f1 = np.poly1d(f1)
+        f2 = np.poly1d(f2)
+        y1 = f1(x)
+        y2 = f2(x)
+        
+        dist = np.sqrt(np.sum((y2-y1)**2*dx)) / (xmax-xmin)
+        
+        return dist
 
     def getPolynoms(self):
         polynoms = []
