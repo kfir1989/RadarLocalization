@@ -30,7 +30,10 @@ class DynamicSimulatedDataset(Dataset):
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
         self.prior2 = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        self.prior = [(27.5,-5,0.3,5,16,True)]
+        #self.prior = [(27.5,-5,0.3,5,16,True)]
+        self.prior = [(30,0,0.2,-15,15,False)] #t0 offset
+        self.prior = [(35,-2,0.2,-10,20,False)] #x0 offset
+        #self.prior = [(35,0,0.2,-15,15,False)] #y0 offset
         dR = kwargs.pop('dR', 0.4)
         dAz = kwargs.pop('dAz', 0.02)
         polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.2) #1:1
@@ -45,7 +48,7 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
         xmin, xmax = 300, 0
         for prior in self.prior:
-            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=100)
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=200)
             z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
             xmin = min(xmin, np.min(z[:,0]))
             xmax = max(xmax, np.max(z[:,0]))
@@ -164,7 +167,7 @@ class NuscenesDataset(Dataset):
     def getData(self, t, GT=False):
         t += self.first_idx
         dR = 0.4
-        dAz = 0.04
+        dAz = 0.02
         z = self.__getRadarSweep(t)[:,0:2]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
         trns_gt,rot_gt = self.getEgoInfo(t, GT=True)
@@ -187,7 +190,7 @@ class NuscenesDataset(Dataset):
         covw = np.matmul(np.matmul(R, cov), R.T)
         
         prior = self.__getPrior(t)
-        img = self.__getSyncedImage(t)
+        img = self.getSyncedImage(t)
         ts = self.radar_ts.iloc[t]["timestamp"] #take timestamp from radar
         heading_gt = 90 + np.sign(R_gt[1,0]) * (np.rad2deg(np.arccos(R_gt[0,0])))
         heading_imu = 90 + np.sign(R_imu[1,0]) * (np.rad2deg(np.arccos(R_imu[0,0])))
@@ -219,11 +222,25 @@ class NuscenesDataset(Dataset):
         lane_record = self.nusc_map.get_arcline_path(lane)
         poses = arcline_path_utils.discretize_lane(lane_record, resolution_meters=0.5)
         poses = np.asarray(poses)
-        lane = np.polyfit(poses[:,0], poses[:,1], 2)
+        xmin = np.min(poses[:,0])
+        ymin = np.min(poses[:,1])
+        #Try to fix as a function of x:
+        fx_flag = True
+        lanex, covx = np.polyfit(poses[:,0]-xmin, poses[:,1]-ymin, 2, cov=True)
+        if covx[0,0]+covx[1,1]+covx[2,2] > 1 or abs(lanex[1]) > 10:
+            fx_flag = False
+            laney, covy = np.polyfit(poses[:,1]-ymin, poses[:,0]-xmin, 2, cov=True)
+            if covy[0,0]+covy[1,1] > 0.2 or laney[1] > 10:
+                raise Exception(f'Strange polynom! poses = {poses[:,0]}, {poses[:,1]} covx= {covx} covy = {covy} lane={lane}')
+        if fx_flag:
+            lane = np.polyfit(poses[:,0], poses[:,1], 2)
+        else:
+            lane = np.polyfit(poses[:,1], poses[:,0], 2)    
+        
         poly = np.poly1d(lane)
         dx = np.diff(poses[:,0])
         dy = np.diff(poses[:,1])
-        return {"x":poses[:,0], "y": poses[:,1], "dx": dx, "dy": dy, "poly":poly}
+        return {"x":poses[:,0], "y": poses[:,1], "dx": dx, "dy": dy, "poly":poly, "fx": fx_flag}
     
     def __sensor2EgoCoordinates(self, pc):
         pc.rotate(Quaternion(self.cs_record['rotation']).rotation_matrix)
@@ -308,7 +325,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.31#0.305  # Known Zoe wheel radius in meters.
+            radius = 0.307#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 
@@ -378,7 +395,7 @@ class NuscenesDataset(Dataset):
                 for olane in self.nusc_map.get_incoming_lane_ids(lane):
                     lanes.append(self.__extractPolynomFromLane(olane))
         else:
-            lane_ids = self.nusc_map.get_records_in_radius(trns[0], trns[1], 80, ['lane', 'lane_connector'])
+            lane_ids = self.nusc_map.get_records_in_radius(trns[0], trns[1], 150, ['lane', 'lane_connector'])
             nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']
             for lane in nearby_lanes:
                 lanes.append(self.__extractPolynomFromLane(lane))
@@ -392,7 +409,7 @@ class NuscenesDataset(Dataset):
         
         return pc
         
-    def __getSyncedImage(self, i):
+    def getSyncedImage(self, i):
         ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar
         cidx = (self.camera_ts['timestamp']-ts).abs().argsort()[0]
         img = mpimg.imread(os.path.join(self.cpath, self.camera_files[cidx]))

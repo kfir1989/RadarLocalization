@@ -44,12 +44,12 @@ class ExtObjectDataAssociator():
     def distance(self, x, u, P):
         return (x-u).T*np.linalg.inv(P)*(x-u)
         
-    def gating_old(self, u, y, y_pred, S_pred, x):
+    def gating(self, u, y, y_pred, S_pred, x):
         quad_dist = (y-y_pred)**2
         P_inv = 1 / S_pred
         return (x[3]-self.deltaS) < u and (x[4]+self.deltaE) > u and (quad_dist * P_inv <= self.deltaL)
     
-    def gating(self, u, y, y_pred, S_pred, x):
+    def gating_not_good(self, u, y, y_pred, S_pred, x):
         quad_dist = (y-y_pred)**2
         P_inv = 1 / S_pred
         
@@ -137,15 +137,15 @@ class PointObjectTrack:
     
     def getCovarianceMatrix(self, fxFlag=True):
         if fxFlag:
-            return self.kf.P_post
+            return self.kf.P
         else:
-            return np.flip(self.kf.P_post)
+            return np.flip(self.kf.P)
     
     def getLastUpdateFrameIdx(self):
         return self.last_update_frame_idx
         
 class ExtendedObjectTrack:
-    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.99, fxFlag=True):
+    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995, fxFlag=True):
         self.kf = KalmanFilter(dim_x=5, dim_z=2)
         x0 = np.array([[5, 0, 0, 0, 0]]).T # a1, a2, a3, x_start, x_end
         P0 = np.diag([2, 1, 1, 20, 20]) #Initial state covariance matrix
@@ -206,7 +206,7 @@ class ExtendedObjectTrack:
         state = self.getStateVector()
         x_elements = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*10))
         y_elements = state[0] + state[1] * x_elements + state[2] * x_elements**2
-        elements = np.array([x_elements, y_elements]).T
+        elements = np.array([x_elements, y_elements]).T if self.fx_flag else np.array([y_elements, x_elements]).T
         
         return elements
     

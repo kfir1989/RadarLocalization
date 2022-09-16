@@ -11,15 +11,15 @@ from scipy.spatial.distance import cdist
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator(deltaL=10)
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
         self.eta = 30
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 5
-        self.ext_max_non_update_iterations = 6
+        self.pnt_max_non_update_iterations = 8
+        self.ext_max_non_update_iterations = 10
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -42,7 +42,7 @@ class StaticTracker:
         z, dz = self.trackUpdate(z, dz, Ge, Gp)
         self.trackInitPnt(z,dz)
             
-        if self.frame_idx > 2:
+        if self.frame_idx > 4:
             self.generateExtObject(prior)
         self.trackMaintenance()     
         
@@ -169,7 +169,8 @@ class StaticTracker:
                     
                     w = np.squeeze(P[selected_pnts,j])
                     #print(w.shape)
-                    fit, cov = np.polyfit(xy[0,:], xy[1,:], 2, cov=True, w=w)
+                    fit = np.polyfit(xy[0,:], xy[1,:], 2, w=w)
+                    _,cov = np.polyfit(xy[0,:]-np.min(xy[0,:]), xy[1,:]-np.min(np.min(xy[1,:])), 2, w=w, cov=True)
                     covP = np.zeros((5,5))
                     covP[0,0] = cov[2,2]
                     covP[0,1] = cov[2,1]
@@ -190,7 +191,11 @@ class StaticTracker:
                     #print("polynom was generated!", polynom)
                     status = self.trackInitExt(polynom, xy.T, fxFlag=fx_flag)
                     if status:
-                        delete_indices.append(selected_pnts[0])
+                        if delete_indices:
+                            delete_indices = delete_indices + selected_pnts[0].tolist()
+                        else:
+                            delete_indices = selected_pnts[0].tolist()
+                            print("delete_indices",delete_indices)
                         self.debug["pgpol"].append({"points": xy, "polynom":polynom})
                     
                 PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
@@ -247,26 +252,27 @@ class StaticTracker:
             overlap = xright-xleft
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])):# and lat_distance < 5:
                 dist = self.innerProductPolynoms(c0,c1,xleft,xright)
-                if dist < 10:
+                if dist < 2:
                     print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
                 print("dist is", dist, " not similar!", c0, c1, xleft, xright)
         return False
      
     @staticmethod
-    def getTrkPointsMatrix(pnt_object_list,fx_flag):
+    def getTrkPointsMatrix_old(pnt_object_list,fx_flag):
         mat = np.zeros([len(pnt_object_list), 2])
         for i, pnt in enumerate(pnt_object_list):
             mat[i, :] = pnt.getStateVector(fx_flag).reshape(-1)
             
         return mat
+    
     @staticmethod
     def createProbabilityMatrixExt_old(pnt_object_list, prior):
         ext_data_associator = Pnts2ExtObjectDataAssociator(deltaL=2)
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
-        xthr = 2
-        lat_dist_to_prior_th = 2
+        xthr = 7
+        lat_dist_to_prior_th = 7
         if pnt_object_list:
             M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             clus = DBSCAN(eps=4, min_samples=2).fit(M)
@@ -329,10 +335,8 @@ class StaticTracker:
         
         return line[ind,:].T
     
-    def findPointOnHypotheticalCurve(xpj, a0, a1, a2, xstart, xend, offset):
-        C = StaticTracker.createParallelCurve(a0, a1, a2, xstart, xend, offset)
+    def findPointOnHypotheticalCurve(xpj, C):
         ind = np.argmin(cdist(xpj.T, C))
-        #print("a0",a0,"a1",a1,"a2",a2,"offset", offset, "xpj",xpj, "C[ind, :]", C[ind, :], C[ind, :].shape)
         
         return C[ind, :].reshape(-1,1)
         
@@ -347,12 +351,12 @@ class StaticTracker:
         return C.T
     
     @staticmethod
-    def createProbabilityMatrixExt(pnt_object_list, prior):
+    def createProbabilityMatrixExt_good(pnt_object_list, prior):
         pnt_data_associator = PointObjectDataAssociator(delta=3)
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
-        xthr = 2
-        lat_dist_to_prior_th = 5
+        xthr = 5
+        lat_dist_to_prior_th = 15
         #print("\n\nDEBUG!!!!\n\n")
         #print("Curve is", StaticTracker.createParallelCurve(prior["c"][0],prior["c"][1],prior["c"][2],prior["xmin"],prior["xmax"],0))
         #print("\n\n\n")
@@ -371,23 +375,110 @@ class StaticTracker:
                 if xi[0] >= xmin and xi[0] <= xmax and lpk < lat_dist_to_prior_th:
                     candidates_indices = np.where((labels[i] >= 0) & (labels==labels[i]))[0]
                     if candidates_indices.size:
-                        squared_dist = np.linalg.norm(M[candidates_indices,:]-M[i,:],axis=1)
-                        sort_idx = np.argsort(np.squeeze(squared_dist))
-                        group_i = [i]
-                        for j in np.nditer(candidates_indices[sort_idx]):
+                        #squared_dist = np.linalg.norm(M[candidates_indices,:]-M[i,:],axis=1)
+                        #sort_idx = np.argsort(np.squeeze(squared_dist))
+                        #group_i = [i]
+                        #for j in np.nditer(candidates_indices[sort_idx]):
+                        C = StaticTracker.createParallelCurve(c[0], c[1], c[2], xmin, xmax, direction * lpk)
+                        for j in np.nditer(candidates_indices):
                             if i != j:
                                 xpj = M[j,:].reshape(-1,1)
-                                kk = np.argmin(np.array([np.abs(xpj[0]-M[k,0]) for k in group_i]))
-                                k = group_i[kk]
-                                xpk = M[k,:].reshape(-1,1)
-                                sqr_dist = np.linalg.norm(xpk-xpj)
-                                if sqr_dist < 3:
+                                #kk = np.argmin(np.array([np.abs(xpj[0]-M[k,0]) for k in group_i]))
+                                #k = group_i[kk]
+                                #xpk = M[k,:].reshape(-1,1)
+                                #sqr_dist = np.linalg.norm(xpk-xpj)
+                                if 1:# sqr_dist < 3:
                                     #xij = StaticTracker.findPointOnHypotheticalCurve(xpj, D[j,:], xmin, xmax, lpk, direction)
-                                    xij = StaticTracker.findPointOnHypotheticalCurve(xpj, c[0], c[1], c[2], xmin, xmax, direction * lpk)
+                                    xij = StaticTracker.findPointOnHypotheticalCurve(xpj, C)
                                     Pj = pnt_object_list[j].getCovarianceMatrix(fx_flag)
                                     P[i,j] = pnt_data_associator.calcLikelihood(xij, xpj, Pj)
-                                    if P[i,j]:
+                                    if 0:# P[i,j]:
                                         group_i.append(j)
+                        
+        return P
+    
+    @staticmethod
+    def createHypothesis(a0,a1,a2,x0,y0,t0,x,y):
+        a0_tag = a0+y0-a1*x0+a2*x0**2
+        a1_tag = a1-2*a2*x0
+        denom = np.sqrt(1+(2*a2*x+a1_tag)**2)
+        x_tag = x + t0 * (2*a2*x+a1_tag)/denom
+        y_tag = a0_tag+a1_tag*x+a2*x**2-t0/denom
+        
+        return x_tag, y_tag
+    
+    @staticmethod
+    def getTrkPointsMatrix(pnt_object_list,fx_flag):
+        M = np.zeros([len(pnt_object_list), 2])
+        COV = np.zeros([len(pnt_object_list), 2,2])
+        det = np.zeros([len(pnt_object_list), 1])
+        for i, pnt in enumerate(pnt_object_list):
+            M[i, :] = pnt.getStateVector(fx_flag).reshape(-1)
+            COV[i,:,:] = np.linalg.inv(pnt.getCovarianceMatrix(fx_flag))
+            #if pnt.getCovarianceMatrix(fx_flag)[0,0] > 0.5:
+                #print("cov of this one", M[i, :], "is ", pnt.getCovarianceMatrix(fx_flag))
+            det[i,:] = np.linalg.det(pnt.getCovarianceMatrix(fx_flag))
+            
+        return M,COV,np.squeeze(det)
+    
+    @staticmethod
+    def getNumDetectionsInROI(xmin, xmax, c, x, y):
+        xx = np.arange(xmin, xmax, 0.1)
+        yy = c[0] + c[1] * xx + c[2] * xx**2
+        ymin, ymax = np.min(yy), np.max(yy)
+        ROI = np.logical_and(np.logical_and(np.logical_and(x > xmin, x < xmax), y > ymin), y < ymax)
+        return np.sum(ROI)
+        
+    @staticmethod
+    def createProbabilityMatrixExt(pnt_object_list, prior):
+        fx_flag = prior["fx"]
+        xthr = 5
+        prob_th = 0.05
+        if pnt_object_list:
+            n_pnts = len(pnt_object_list)
+            P = np.eye(n_pnts)
+            c = prior["c"]
+            X0 = np.arange(-5,5,0.5)
+            Y0 = np.arange(-8,8,0.5)
+            T0 = np.array([0])
+            if c[2] > 0.1:
+                T0 = np.arange(-5,5,0.5)
+                
+            n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
+            xmin, xmax = prior["xmin"]-xthr, prior["xmax"]+xthr
+            
+            H = np.zeros([n_pnts,n_max_hypo])
+            M, INVCOV, det = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
+            #DBSCAN
+            clus = DBSCAN(eps=5, min_samples=2).fit(M)
+            labels = clus.labels_ 
+            x = M[:,0]
+            y = M[:,1]
+            i_hypo = 0
+            
+            n_roi = StaticTracker.getNumDetectionsInROI(xmin, xmax, c, x, y)
+            if n_roi < 8:
+                return P
+            
+            for x0 in np.nditer(X0):
+                for y0 in np.nditer(Y0):
+                    for t0 in np.nditer(T0):
+                        xtag, ytag = StaticTracker.createHypothesis(c[0],c[1],c[2],x0,y0,t0,x,y)
+                        valid = (x > xmin) & (x < xmax)
+                        dx = (xtag-x)
+                        dy = (ytag-y)
+                        D = INVCOV[:,0,0] * dx**2 + (INVCOV[:,0,1] + INVCOV[:,1,0]) * dx*dy + INVCOV[:,1,1] * dy**2
+                        H[:,i_hypo] = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * D) 
+                        H[np.logical_not(valid), i_hypo] = 0
+                        i_hypo += 1
+            
+            best_hypo = np.argmax(H, axis=1)
+            for i,pnt in enumerate(pnt_object_list):
+                cluster_i = (labels[i] >= 0) & (labels==labels[i])
+                #P[i,:] = H[:, best_hypo[i]]
+                #P[i,np.logical_or(np.logical_not(cluster_i),P[i,:]<prob_th)] = 0
+                P[:,i] = H[:, best_hypo[i]]
+                P[np.logical_or(np.logical_not(cluster_i),P[:,i]<prob_th), i] = 0
                         
         return P
                     

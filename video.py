@@ -24,8 +24,8 @@ def drawLanes(ax, nusc_map, ego_trns):
         #grad = np.abs(dy / (dx + 1e-6))
         #sx = -1*np.sign(dy) * w * 1/np.sqrt(1+grad**2)
         #sy = np.sign(dx) * w * grad * 1/np.sqrt(1+grad**2)
-        poses[:, 0] -= 1.2
-        poses[:, 1] -= 1.2
+        poses[:, 0] += -1
+        poses[:, 1] += -1
             
         ax.scatter(poses[:,0], poses[:,1],color='orange',s=2)
 
@@ -290,8 +290,7 @@ class NuscenesVideo:
         self.ax[0,0] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[0,0],edgecolor='red', width=1.5, height=4)
         if video_with_priors:
             for lane in prior:
-                x = lane["x"]
-                self.ax[0,0].plot(x, lane["poly"](x)) 
+                self.ax[0,0].plot(lane["x"], lane["y"]) 
         
         self.ax[0,1].set_title("Camera frame={}".format(idx), fontsize=20)
         self.ax[0,1].imshow(img)
@@ -303,8 +302,9 @@ class NuscenesVideo:
             self.ax[0,2].set_ylim([self.y_lim_min,self.y_lim_max])
             self.ax[0,2] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[0,2],edgecolor='red', width=1.5, height=4)
             for c,polynom in enumerate(polynoms):
-                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-                y_plot = polynom["f"](x_plot)
+                xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+                y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
                 self.ax[0,2].plot(x_plot,y_plot,linewidth=3,color=self.colors[c])
         else:
             self.ax[0,2].set_title("Prior frame={}".format(idx), fontsize=20)
@@ -342,8 +342,9 @@ class NuscenesVideo:
             self.ax[1,2].imshow(edges, origin='lower')
             self.ax[1,2].grid(False)
         for c,polynom in enumerate(polynoms):
-            x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-            y_plot = polynom["f"](x_plot)
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+            y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
             self.ax[1,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="blue",linewidth=4) 
         self.ax[1,2].scatter(pos[0]-self.first_pos[0]+self.patch_size*0.5,pos[1]-self.first_pos[1]+self.patch_size*0.5,s=10,color="red")
             
@@ -420,8 +421,7 @@ class NuscenesVideoDebug:
         self.ax[0,0] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[0,0],edgecolor='red', width=1.5, height=4)
         if video_with_priors:
             for lane in prior:
-                x = lane["x"]
-                self.ax[0,0].plot(x, lane["poly"](x)) 
+                self.ax[0,0].plot(lane["x"], lane["y"]) 
         
         self.ax[0,1].set_title("Point tracks", fontsize=20)
         self.ax[0,1].scatter(pointTracks[:,0], pointTracks[:,1])
@@ -434,8 +434,9 @@ class NuscenesVideoDebug:
             self.ax[0,2].set_ylim(ylim)
             self.ax[0,2] = drawEgo(x0=pos[0],y0=pos[1],angle=heading,ax=self.ax[0,2],edgecolor='red', width=1.5, height=4)
             for c,polynom in enumerate(polynoms):
-                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-                y_plot = polynom["f"](x_plot)
+                xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+                y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
                 self.ax[0,2].plot(x_plot,y_plot,linewidth=3,color=self.colors[c])
         else:
             self.ax[0,2].set_title("Prior frame={}".format(idx), fontsize=20)
@@ -463,7 +464,7 @@ class NuscenesVideoDebug:
         for c,pair in enumerate(debug["pgpol"]):
             x_plot = np.linspace(pair["polynom"]["x_start"], pair["polynom"]["x_end"], 100)
             y_plot = pair["polynom"]["f"](x_plot)
-            if pair["fx_flag"]:
+            if 1:#pair["fx_flag"]:
                 self.ax[1,0].plot(y_plot,x_plot,linewidth=3,linestyle='--',color=self.colors[c])
                 self.ax[1,0].scatter(pair["points"][0,:], pair["points"][1,:],c=[self.colors[c]]*pair["points"].shape[1])
             else:
@@ -600,6 +601,11 @@ class PFVideo:
         self.ax[0,2].set_title("GT track and polynoms on Map", fontsize=20)
         self.ax[1,2].set_title("IMU and PF tracks on map", fontsize=20)
         
+        self.pf_rmse_lateral = np.zeros(N)
+        self.pf_rmse_longitudal = np.zeros(N)
+        self.imu_rmse_lateral = np.zeros(N)
+        self.imu_rmse_longitudal = np.zeros(N)
+        
         self.history_pf_x = None
         self.history_pf_y = None
         
@@ -651,6 +657,16 @@ class PFVideo:
         gt_track_pos, pf_track_pos, imu_track_pos = self.calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
         pf_track_errors = pf_track_pos - gt_track_pos
         imu_track_errors = imu_track_pos - gt_track_pos
+        
+        self.pf_rmse_lateral[self.counter] = pf_track_errors[0]
+        self.pf_rmse_longitudal[self.counter] = pf_track_errors[1]
+        self.imu_rmse_lateral[self.counter] = imu_track_errors[0]
+        self.imu_rmse_longitudal[self.counter] = imu_track_errors[1]
+        
+        print(f"PF RMSE lateral: {math.sqrt((1. / (self.counter+1)) * np.sum(self.pf_rmse_lateral**2))}")
+        print(f"PF RMSE longitudal: {math.sqrt((1. / (self.counter+1)) * np.sum(self.pf_rmse_longitudal**2))}")
+        print(f"IMU RMSE lateral: {math.sqrt((1. / (self.counter+1)) * np.sum(self.imu_rmse_lateral**2))}")
+        print(f"IMU RMSE longitudal: {math.sqrt((1. / (self.counter+1)) * np.sum(self.imu_rmse_longitudal**2))}")
             
         #Cross-Track Position(t)
         self.ax[0,0].scatter(self.timestamp_arr[self.counter], gt_track_pos[0],color='green',alpha=0.6,label='GT')
@@ -711,8 +727,9 @@ class PFVideo:
             self.ax3[2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
         
         for c,polynom in enumerate(polynoms):
-            x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-            y_plot = polynom["f"](x_plot)
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+            y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
             self.ax[0,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2,label="polynoms") 
         self.ax[0,2].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="green",label="GT")
         
@@ -777,8 +794,9 @@ class PFVideo:
             self.ax3[2].imshow(self.map, origin='lower')
             self.ax3[2].grid(False)
             for c,polynom in enumerate(polynoms):
-                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-                y_plot = polynom["f"](x_plot)
+                xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+                y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
                 self.ax3[1].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color=self.colors[c],linewidth=2,label=f"{c+1}") 
                 #self.ax3[1].text(0.5*(x_plot[0] + x_plot[-1])-self.first_pos[0]+self.patch_size*0.5 + 2, 0.5*(y_plot[0] + y_plot[-1])-self.first_pos[1]+self.patch_size*0.5+2, f"{c+1}", size=20)
             self.ax3[1].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=8,color="green",label="GT")
@@ -786,8 +804,9 @@ class PFVideo:
             self.ax3[1].legend(loc="upper left")
 
             for c,polynom in enumerate(polynoms):
-                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-                y_plot = polynom["f"](x_plot)
+                xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+                y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
                 #translate
                 x_plot -= gt_pos[0] - pf_mean_pos[0]
                 y_plot -= gt_pos[1] - pf_mean_pos[1]
@@ -1003,8 +1022,9 @@ class PFXYVideo:
             self.ax[1,2].set_ylim([self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50])
         
         for c,polynom in enumerate(polynoms):
-            x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
-            y_plot = polynom["f"](x_plot)
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+            y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx
             self.ax[0,2].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=2,label="polynoms") 
         self.ax[0,2].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=3,color="green",label="GT")
         if self.counter == 0:

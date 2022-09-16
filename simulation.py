@@ -1,6 +1,7 @@
 from dataset import *
 from video import SimulationVideo
 from video import NuscenesVideo, NuscenesVideoDebug, PFVideo, PFXYVideo, DynamicTrackerVideo
+from database import NuscenesProcessedDatabase 
 
 class Simulation():
     def __init__(self, model, **kwargs):
@@ -20,9 +21,9 @@ class DynamicSimulation():
         for t in range(0,N):
             print(f"frame {t}")
             zw, covw, prior, video_data = self.dataset.getData(t)
-            print("prior", prior)
+            #print("prior", prior)
             points, polynoms = self.model.run(zw,covw,prior)
-            prior = [{"c": (27.5,-5,0.3), "xmin": 5, "xmax": 16,"fx": True}]
+            #prior = [{"c": (27.5,-5,0.3), "xmin": 5, "xmax": 16,"fx": True}]
             self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
             results.append(polynoms)
             
@@ -32,7 +33,8 @@ class NuscenesSimulation():
     def __init__(self, nusc, model, scene_id, **kwargs):
         self.model = model
         directory = kwargs.pop('directory', r"/home/kfir/workspace/nuScenes/v1.0-trainval")
-        self.video_list = kwargs.pop('video_list', {'video' : False, 'video_debug': False, 'video_pf': True, 'video_pf_xy': False})
+        self.video_list = kwargs.pop('video_list', {'video' : False, 'video_debug': False, 'video_pf': False, 'video_pf_xy': False})
+        self.save_processed = kwargs.pop('save_processed', False)
         self.nmax = kwargs.pop('Nmax', 800)
         self.mm = model.mm
         self.dataset = NuscenesDataset(nusc=nusc, directory=directory, scene_id=scene_id, N=self.nmax)
@@ -41,6 +43,7 @@ class NuscenesSimulation():
         self.video_pf = PFVideo(history=True, scene=scene_id, N=self.nmax)
         self.video_pf_xy = PFXYVideo(history=True, scene=scene_id, N=self.nmax)
         self.video_dynamic_tracker = DynamicTrackerVideo(history=True, scene=scene_id, N=self.nmax)
+        self.database = NuscenesProcessedDatabase(scene_id=scene_id)
         self.lane = None
         self.scene = scene_id
     
@@ -65,6 +68,8 @@ class NuscenesSimulation():
     def run(self,start, N, generate_video=False, video_with_priors=False, debug=False, translate=True):
         start_idx = start
         first = True
+        gt_pos = np.zeros([N,2])
+        pf_pos = np.zeros([N,2])
         for t in range(start_idx,start_idx + N):
             print(f"frame {t}")
             #get data
@@ -74,4 +79,8 @@ class NuscenesSimulation():
             points, polynoms, dynamic_tracks, dynamic_clusters, debug_info, mm_results = self.model.run({"zw":zw, "covw":covw}, {"dw":dw}, video_data, prior, translation, nusc_map)
             #Draw plots
             self.drawPlots(t, video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, nusc_map, video_with_priors, translation, debug_info, generate_video=generate_video)
+            if self.save_processed:
+                self.database.save(t, video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info)
+                
+        
             
