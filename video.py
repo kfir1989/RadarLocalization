@@ -53,12 +53,12 @@ def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000):
             ax.arrow(np.mean(tstate[-n_last_frames:,0]+x_offset), np.mean(tstate[-n_last_frames:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
 
 class SimulationVideo:
-    def __init__(self):
+    def __init__(self, name="simulation1"):
         self.fig, self.ax = plt.subplots(2,3,figsize=(40,15))
         self.fig2, self.ax2 = plt.subplots(1,3,figsize=(40,15))
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
-        self.dir_name = f"images/simulation1/"
+        self.dir_name = f"images/{name}/"
         os.system("mkdir -p " + self.dir_name)
         self.x_lim_min = -20
         self.x_lim_max = 20

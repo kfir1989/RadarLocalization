@@ -1,7 +1,7 @@
 from dataset import *
 from video import SimulationVideo
 from video import NuscenesVideo, NuscenesVideoDebug, PFVideo, PFXYVideo, DynamicTrackerVideo
-from database import NuscenesProcessedDatabase 
+from database import NuscenesProcessedDatabase, SimulatedProcessedDatabase
 
 class Simulation():
     def __init__(self, model, **kwargs):
@@ -15,6 +15,10 @@ class DynamicSimulation():
         self.model = model
         self.dataset = DynamicSimulatedDataset(**kwargs)
         self.video = SimulationVideo()
+        self.video_flag = kwargs.pop('video_flag', False)
+        self.save_processed = kwargs.pop('save_processed', False)
+        self.sim_name = kwargs.pop('name', "sim")
+        self.database = SimulatedProcessedDatabase(name=self.sim_name)
     
     def run(self, N):
         results = []
@@ -24,7 +28,13 @@ class DynamicSimulation():
             #print("prior", prior)
             points, polynoms = self.model.run(zw,covw,prior)
             #prior = [{"c": (27.5,-5,0.3), "xmin": 5, "xmax": 16,"fx": True}]
-            self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
+            
+            if self.video_flag:
+                self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
+            
+            if self.save_processed:
+                self.database.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(), video_data["pos"])
+                
             results.append(polynoms)
             
         return results

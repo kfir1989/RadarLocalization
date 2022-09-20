@@ -80,11 +80,17 @@ def createPolynom(a1,a2,a3,xstart=0,xend=100):
     return x, y
 
 def generatePolynom(a1,a2,a3,n,xstart=0,xend=100):
-    x = np.sort(np.asarray(np.random.random_sample(n)))
-    x = (xend - xstart) * x + xstart
+    x = np.linspace(start=xstart, stop=xend, num = n*10)
     y = a3*x**2 + a2*x + a1
+    dy = np.sqrt(1+(np.diff(y)/np.diff(x))**2)
+    S = np.cumsum(dy)
+    l = S[-1]
+    ind = np.zeros(n, dtype=np.int)
 
-    return x, y
+    for i in range(n):
+        ind[i] = np.argmin(np.abs(S - l/(n-1) * i))
+
+    return x[ind], y[ind]
 
 def getXYCovMatrix(x, y, dR, dAz):
     R = np.sqrt(x**2+y**2)

@@ -29,10 +29,12 @@ class DynamicSimulatedDataset(Dataset):
         v0 = kwargs.pop('v0', 0)
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
+        #self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
+        #self.prior2 = self.prior#kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
         self.prior2 = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        #self.prior = [(27.5,-5,0.3,5,16,True)]
-        self.prior = [(30,0,0.2,-15,15,False)] #t0 offset
-        self.prior = [(35,-2,0.2,-10,20,False)] #x0 offset
+        self.prior = [(27.5,-5,0.3,5,16,True)]
+        #self.prior = [(30,0,0.2,-15,15,False)] #t0 offset
+        #self.prior = [(35,-2,0.2,-10,20,False)] #x0 offset
         #self.prior = [(35,0,0.2,-15,15,False)] #y0 offset
         dR = kwargs.pop('dR', 0.4)
         dAz = kwargs.pop('dAz', 0.02)
@@ -48,7 +50,7 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
         xmin, xmax = 300, 0
         for prior in self.prior:
-            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=200)
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=100)
             z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
             xmin = min(xmin, np.min(z[:,0]))
             xmax = max(xmax, np.max(z[:,0]))
@@ -325,7 +327,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.307#0.305  # Known Zoe wheel radius in meters.
+            radius = 0.310#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 

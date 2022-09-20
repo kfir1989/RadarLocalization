@@ -38,7 +38,7 @@ class ExtObjectDataAssociator():
     def __init__(self, dim=2,deltaL=1,deltaS=2,deltaE=2):
         self.deltaL = deltaL
         self.deltaS = deltaS # delta x start
-        self.deltaE = deltaL # delta x end
+        self.deltaE = deltaE # delta x end
         self.dim = dim #rank
         
     def distance(self, x, u, P):

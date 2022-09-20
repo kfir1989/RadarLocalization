@@ -16,6 +16,31 @@ class ProcessedDatabase():
     
     def run(self, N):
         pass
+    
+class SimulatedProcessedDatabase(ProcessedDatabase):
+    def __init__(self, name, **kwargs):
+        self.dir_name = os.path.join("images", f"{name}","database")    
+        print("self.dir_name", self.dir_name)
+        os.system("mkdir -p " + self.dir_name)
+    
+    def save(self, t, prior, video_data, points, polynoms, debug_info, pos):
+        file_name = os.path.join(self.dir_name, f"frame_{t}.pkl")
+        #relevant_keys = ["pc", "prior", "pos", "rot", "heading", "heading_imu", "pos_imu", "rot_imu", "ego_path", "ego_trns", "veh_speed", "timestamp"]
+        #video_data_save = { relevant_key: video_data[relevant_key] for relevant_key in relevant_keys }
+                         
+        with open(file_name, 'wb') as f:
+            pickle.dump([prior, video_data, points, polynoms, debug_info, pos], f)
+
+    def load(self, t):
+        file_name = os.path.join(self.dir_name, f"frame_{t}.pkl")
+        with open(file_name, 'rb') as f:
+            prior, video_data, points, polynoms, debug_info, pos = pickle.load(f)
+
+        return prior, video_data, points, polynoms, debug_info, pos
+    
+    
+    
+    
             
 class NuscenesProcessedDatabase(ProcessedDatabase):
     def __init__(self, scene_id, **kwargs):

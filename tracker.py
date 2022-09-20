@@ -11,7 +11,7 @@ from scipy.spatial.distance import cdist
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2)
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=2,deltaE=2)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
         self.eta = 30
@@ -131,7 +131,7 @@ class StaticTracker:
             return False
         x = np.array([polynom["f"].c[2], polynom["f"].c[1], polynom["f"].c[0], polynom["x_start"], polynom["x_end"]]).T
         trk_similar_test = True
-        if (not trk_similar_test or not self.isTrkSimilar(x)):
+        if (not trk_similar_test or not self.isTrkSimilar(x, fxFlag)):
             new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx,fxFlag=fxFlag)
             print("created an extended object!", x)
             self.ext_object_list.append(new_trk)
@@ -195,7 +195,7 @@ class StaticTracker:
                             delete_indices = delete_indices + selected_pnts[0].tolist()
                         else:
                             delete_indices = selected_pnts[0].tolist()
-                            print("delete_indices",delete_indices)
+                            #print("delete_indices",delete_indices)
                         self.debug["pgpol"].append({"points": xy, "polynom":polynom})
                     
                 PM = self.zeroOutAssociation(PM,selected_pnts[0],j)
@@ -240,9 +240,11 @@ class StaticTracker:
         
         return np.array([a0,a1,a2,x[0],x[2]])
         
-    def isTrkSimilar(self, x_cand):
+    def isTrkSimilar(self, x_cand, fxFlag):
         similar = False
         for trk in self.ext_object_list:
+            if trk.getFxFlag() != fxFlag:
+                continue
             x_trk = trk.getStateVector()
             c0 = (x_trk[2], x_trk[1], x_trk[0])
             c1 = (x_cand[2], x_cand[1], x_cand[0])
@@ -309,6 +311,15 @@ class StaticTracker:
         dists = cdist(M, pol)
         ind = np.argmin(dists,axis=1)
         return pol[ind,:]
+    
+    @staticmethod
+    def findClosestPoints(x_tag, y_tag, px, py):
+        X = np.array([x_tag, y_tag]).T
+        P = np.array([px, py]).T
+        #print("M and pol shape", M.shape, pol.shape)
+        dists = cdist(X, P)
+        ind = np.argmin(dists,axis=1)
+        return P[ind,0], P[ind,1]
     
     def findPointOnHypotheticalCurve_old(xpj, Dj, xmin, xmax, lpk, direction):
         if xpj[0] > Dj[0]:
@@ -426,8 +437,18 @@ class StaticTracker:
         xx = np.arange(xmin, xmax, 0.1)
         yy = c[0] + c[1] * xx + c[2] * xx**2
         ymin, ymax = np.min(yy), np.max(yy)
-        ROI = np.logical_and(np.logical_and(np.logical_and(x > xmin, x < xmax), y > ymin), y < ymax)
-        return np.sum(ROI)
+        ROI = np.logical_and(np.logical_and(np.logical_and(x > xmin, x < xmax), y > ymin - 5), y < ymax + 5)
+        n_det = np.sum(ROI)
+        
+        #print("c", c, "ymin", ymin, "ymax", ymax, "n_det", n_det)
+        return n_det
+    
+    @staticmethod
+    def getPriorPnts(xmin, xmax, c):
+        xx = np.arange(xmin, xmax, 0.1)
+        yy = c[0] + c[1] * xx + c[2] * xx**2
+        
+        return xx, yy
         
     @staticmethod
     def createProbabilityMatrixExt(pnt_object_list, prior):
@@ -438,16 +459,8 @@ class StaticTracker:
             n_pnts = len(pnt_object_list)
             P = np.eye(n_pnts)
             c = prior["c"]
-            X0 = np.arange(-5,5,0.5)
-            Y0 = np.arange(-8,8,0.5)
-            T0 = np.array([0])
-            if c[2] > 0.1:
-                T0 = np.arange(-5,5,0.5)
-                
-            n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
             xmin, xmax = prior["xmin"]-xthr, prior["xmax"]+xthr
             
-            H = np.zeros([n_pnts,n_max_hypo])
             M, INVCOV, det = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             #DBSCAN
             clus = DBSCAN(eps=5, min_samples=2).fit(M)
@@ -460,17 +473,51 @@ class StaticTracker:
             if n_roi < 8:
                 return P
             
-            for x0 in np.nditer(X0):
-                for y0 in np.nditer(Y0):
-                    for t0 in np.nditer(T0):
-                        xtag, ytag = StaticTracker.createHypothesis(c[0],c[1],c[2],x0,y0,t0,x,y)
-                        valid = (x > xmin) & (x < xmax)
-                        dx = (xtag-x)
-                        dy = (ytag-y)
-                        D = INVCOV[:,0,0] * dx**2 + (INVCOV[:,0,1] + INVCOV[:,1,0]) * dx*dy + INVCOV[:,1,1] * dy**2
-                        H[:,i_hypo] = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * D) 
-                        H[np.logical_not(valid), i_hypo] = 0
-                        i_hypo += 1
+            px, py = StaticTracker.getPriorPnts(xmin, xmax, c)
+            
+            X0_coarse, Y0_coarse, T0_coarse = None, None, None
+            n_max_detections = -1
+            for stage in range(0,2):
+                if stage == 0:
+                    X0 = np.arange(-5,5,1)
+                    Y0 = np.arange(-15,15,1)
+                    T0 = np.array([0])
+                    if c[2] > 0.1:
+                        T0 = np.arange(-6,6,1)
+                if stage == 1:
+                    X0 = np.arange(X0_coarse-1,X0_coarse+1,0.2)
+                    Y0 = np.arange(Y0_coarse-1,Y0_coarse+1,0.2)
+                    T0 = np.array([0])
+                    if c[2] > 0.1:
+                        T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
+                
+                    n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
+                    H = np.zeros([n_pnts,n_max_hypo])
+            
+                for x0 in np.nditer(X0):
+                    for y0 in np.nditer(Y0):
+                        for t0 in np.nditer(T0):
+                            xtag, ytag = StaticTracker.createHypothesis(c[0],c[1],c[2],x0,y0,t0,px,py)
+                            valid = (x > xmin) & (x < xmax)
+                            xpol, ypol = StaticTracker.findClosestPoints(x, y, xtag, ytag)
+                            dx = (xpol-x)
+                            dy = (ypol-y)
+                            D = INVCOV[:,0,0] * dx**2 + (INVCOV[:,0,1] + INVCOV[:,1,0]) * dx*dy + INVCOV[:,1,1] * dy**2
+                            h = np.power((2*np.pi), -0.5*2) * np.power(det, -0.5) * np.exp(-0.5 * D) 
+
+                            if stage == 0:
+                                n_detections = np.sum(valid & (h > prob_th))
+                                if n_detections > n_max_detections:
+                                    X0_coarse = x0
+                                    Y0_coarse = y0
+                                    T0_coarse = t0
+                                    n_max_detections = n_detections
+                                continue
+
+                            
+                            H[:,i_hypo] = h
+                            H[np.logical_not(valid), i_hypo] = 0
+                            i_hypo += 1
             
             best_hypo = np.argmax(H, axis=1)
             for i,pnt in enumerate(pnt_object_list):
@@ -479,7 +526,7 @@ class StaticTracker:
                 #P[i,np.logical_or(np.logical_not(cluster_i),P[i,:]<prob_th)] = 0
                 P[:,i] = H[:, best_hypo[i]]
                 P[np.logical_or(np.logical_not(cluster_i),P[:,i]<prob_th), i] = 0
-                        
+        
         return P
                     
     @staticmethod
