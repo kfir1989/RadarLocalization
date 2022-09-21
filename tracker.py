@@ -18,8 +18,8 @@ class StaticTracker:
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 8
-        self.ext_max_non_update_iterations = 10
+        self.pnt_max_non_update_iterations = 8#4
+        self.ext_max_non_update_iterations = 10#5
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -254,7 +254,7 @@ class StaticTracker:
             overlap = xright-xleft
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])):# and lat_distance < 5:
                 dist = self.innerProductPolynoms(c0,c1,xleft,xright)
-                if dist < 2:
+                if dist < 2: #10:
                     print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
                 print("dist is", dist, " not similar!", c0, c1, xleft, xright)
@@ -478,6 +478,7 @@ class StaticTracker:
             X0_coarse, Y0_coarse, T0_coarse = None, None, None
             n_max_detections = -1
             for stage in range(0,2):
+                
                 if stage == 0:
                     X0 = np.arange(-5,5,1)
                     Y0 = np.arange(-15,15,1)
@@ -490,7 +491,20 @@ class StaticTracker:
                     T0 = np.array([0])
                     if c[2] > 0.1:
                         T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
-                
+                """
+                if stage == 0:
+                    X0 = np.arange(-7,7,1)
+                    Y0 = np.arange(-7,7,1)
+                    T0 = np.array([0])
+                    if c[2] > 0.1:
+                        T0 = np.arange(-6,6,1)
+                if stage == 1:
+                    X0 = np.arange(X0_coarse-1,X0_coarse+1,0.2)
+                    Y0 = np.arange(Y0_coarse-1,Y0_coarse+1,0.2)
+                    T0 = np.array([0])
+                    if c[2] > 0.1:
+                        T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
+                """
                     n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
                     H = np.zeros([n_pnts,n_max_hypo])
             
