@@ -327,7 +327,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.310#0.305  # Known Zoe wheel radius in meters.
+            radius = 0.307#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 

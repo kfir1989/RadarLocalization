@@ -6,7 +6,7 @@ from matplotlib.patches import Ellipse, Rectangle
 import matplotlib.transforms as transforms
 
 def drawEgo(x0, y0, angle, ax, n_std=1.0, facecolor='none',width=2,height=5, **kwargs):
-    ego = Rectangle((x0, y0), width=2, height=5, angle=angle,
+    ego = Rectangle((x0, y0), width=width, height=height, angle=angle,
                       facecolor='black', **kwargs)
 
     ax.add_patch(ego)

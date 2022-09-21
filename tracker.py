@@ -274,10 +274,10 @@ class StaticTracker:
         #print("createProbabilityMatrixExt for prior", prior)
         fx_flag = prior["fx"]
         xthr = 7
-        lat_dist_to_prior_th = 7
+        lat_dist_to_prior_th = 4
         if pnt_object_list:
-            M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
-            clus = DBSCAN(eps=4, min_samples=2).fit(M)
+            M = StaticTracker.getTrkPointsMatrix_old(pnt_object_list,fx_flag)
+            clus = DBSCAN(eps=3, min_samples=2).fit(M)
             labels = clus.labels_ 
             P = np.eye(len(pnt_object_list))
             for i in range(M.shape[0]):
