@@ -491,6 +491,9 @@ class StaticTracker:
                     T0 = np.array([0])
                     if c[2] > 0.1:
                         T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
+                    
+                    n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
+                    H = np.zeros([n_pnts,n_max_hypo])
                 """
                 if stage == 0:
                     X0 = np.arange(-7,7,1)
@@ -505,8 +508,7 @@ class StaticTracker:
                     if c[2] > 0.1:
                         T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
                 """
-                    n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
-                    H = np.zeros([n_pnts,n_max_hypo])
+                    
             
                 for x0 in np.nditer(X0):
                     for y0 in np.nditer(Y0):
