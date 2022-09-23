@@ -114,10 +114,12 @@ def generatePolynomNoisyPoints(N, a1, a2, a3, dR, dAz, xRange=[0,100], pos=[0,0]
     return [x, y, x_noisy, y_noisy, cov]
 
 def generateRandomNoisyPoints(N, xRange, yRange, dR, dAz):
-    x = xRange[0]+(xRange[1]-xRange[0])*np.random.rand(N)
-    y = yRange[0]+(yRange[1]-yRange[0])*np.random.rand(N)
-    R = np.sqrt(x**2+y**2)
-    Az = np.arctan(y/x)
+    R = xRange[0]+(xRange[1]-xRange[0])*np.random.rand(N)
+    Az = yRange[0]+(yRange[1]-yRange[0])*np.random.rand(N)
+    #R = np.sqrt(x**2+y**2)
+    #Az = np.arctan(y/x)
+    x = R*np.cos(Az)
+    y = R*np.sin(Az)
     cov = errorPropagation(R,Az,dR,dAz)
     
     return [x,y,cov]

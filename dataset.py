@@ -29,10 +29,10 @@ class DynamicSimulatedDataset(Dataset):
         v0 = kwargs.pop('v0', 0)
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
-        #self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        #self.prior2 = self.prior#kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        self.prior2 = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
-        self.prior = [(27.5,-5,0.3,5,16,True)]
+        self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
+        self.prior2 = self.prior#kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
+        #self.prior2 = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
+        #self.prior = [(27.5,-5,0.3,5,16,True)]
         #self.prior = [(30,0,0.2,-15,15,False)] #t0 offset
         #self.prior = [(35,-2,0.2,-10,20,False)] #x0 offset
         #self.prior = [(35,0,0.2,-15,15,False)] #y0 offset
@@ -50,7 +50,7 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
         xmin, xmax = 300, 0
         for prior in self.prior:
-            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=100)
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=50)
             z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
             xmin = min(xmin, np.min(z[:,0]))
             xmax = max(xmax, np.max(z[:,0]))
@@ -87,7 +87,7 @@ class DynamicSimulatedDataset(Dataset):
         xRange[0]=min(5, xRange[0])
         xRange[1]=max(50,xRange[1])
         
-        [x_noise,y_noise,noise_cov] = generateRandomNoisyPoints(N=N,xRange=xRange,yRange=[-20,20],dR=dR,dAz=dAz)
+        [x_noise,y_noise,noise_cov] = generateRandomNoisyPoints(N=N,xRange=xRange,yRange=[np.deg2rad(-60), np.deg2rad(60)],dR=dR,dAz=dAz)
         z = np.array([x_noise, y_noise]).T
         dz = np.array(noise_cov)
         
@@ -143,7 +143,7 @@ class NuscenesDataset(Dataset):
         self.imu = []
         self.veh_speed = []
         self.veh_pose = []
-        for ii in range(scene_id, scene_id + 8):
+        for ii in range(scene_id, scene_id + 12):
             self.imu = self.imu + nusc_can.get_messages(self.__getSceneName(ii), 'ms_imu')
             self.veh_speed = self.veh_speed + nusc_can.get_messages(self.__getSceneName(ii), 'zoe_veh_info')
             self.veh_pose = self.veh_pose + nusc_can.get_messages(self.__getSceneName(ii), 'pose')
@@ -160,7 +160,9 @@ class NuscenesDataset(Dataset):
         first_sample_token = my_scene['first_sample_token']
         my_sample = self.nusc.get('sample', first_sample_token)
         radar_front_data = self.nusc.get('sample_data', my_sample['data']['RADAR_FRONT'])
+        camera_front_data = self.nusc.get('sample_data', my_sample['data']['CAM_FRONT'])
         self.cs_record = self.nusc.get('calibrated_sensor', radar_front_data['calibrated_sensor_token'])
+        self.cs_record_camera = self.nusc.get('calibrated_sensor', camera_front_data['calibrated_sensor_token'])
         self.first_idx = self.__getFirstIdxOffset(scene_name)
         self.odometry = {'r1':0,'t':0,'r2':0}
         self.__getFirstPosition(self.first_idx)
@@ -182,7 +184,7 @@ class NuscenesDataset(Dataset):
         else:
             trns,rot,R = trns_imu, rot_imu, R_imu
                 
-        pc = self.__getTransformedRadarData(t,trns,rot)
+        pc, orig_pc = self.getTransformedRadarData(t,trns,rot)
         static_data = pc[:, pc[3,:]==1].T
         #dynamic_data = pc[:, np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6)].T
         pc = pc.T
@@ -197,21 +199,28 @@ class NuscenesDataset(Dataset):
         heading_gt = 90 + np.sign(R_gt[1,0]) * (np.rad2deg(np.arccos(R_gt[0,0])))
         heading_imu = 90 + np.sign(R_imu[1,0]) * (np.rad2deg(np.arccos(R_imu[0,0])))
         
-        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns_gt, "rot": R_gt, "heading": heading_gt, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns, "veh_speed": veh_speed, "timestamp": ts}
+        video_data = {"pc": zw, "img": img, "prior": prior, "pos": trns_gt, "rot": R_gt, "heading": heading_gt, "heading_imu": heading_imu, "pos_imu" : trns_imu, "rot_imu" : rot_imu, "rot_gt": rot_gt,  "odometry": self.odometry, "ego_path": self.ego_path, "ego_trns": self.ego_trns, "veh_speed": veh_speed, "timestamp": ts, "orig_pc": orig_pc}
 
         return zw, covw, prior, dw, video_data, self.nusc_map
     
-    def __getTransformedRadarData(self, t, trns, rot):
+    def getTransformedRadarData(self, t, trns, rot):
         f = os.path.join(self.rpath, self.radar_files[t])
         pc = RadarPointCloud.from_file(f)
         pc = self.__sensor2World(t, pc, trns, rot)
         
-        return pc.points
+        return pc.points, pc
+    
+    def getEGORadarData(self, t, trns, rot):
+        f = os.path.join(self.rpath, self.radar_files[t])
+        pc = RadarPointCloud.from_file(f)
+        
+        return pc
+
     
     def getDynamicPoints(self, t):
         t += self.first_idx
         trns,rot = self.getEgoInfo(t, GT=True)
-        pc = self.__getTransformedRadarData(t, trns, rot)
+        pc, _ = self.getTransformedRadarData(t, trns, rot)
         pc = pc.T
         pc = np.squeeze(pc[np.where(pc[:,3]==0) or np.where(pc[:,3]==2) or np.where(pc[:,3]==6), :], axis=0)
         R = rot.rotation_matrix[0:2,0:2] ##not great!
@@ -327,7 +336,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.307#0.305  # Known Zoe wheel radius in meters.
+            radius = 0.308#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 

@@ -19,7 +19,7 @@ def drawEllipses(measurements, key1, key2, ax, n=10, edgecolor='firebrick'):
 def drawPrior(ax, priors, xlim, **kwargs):
     for idx,prior in enumerate(priors):
         x,y = createPolynom(prior["c"][0],prior["c"][1],prior["c"][2],xstart=prior["xmin"],xend=prior["xmax"])
-        label = kwargs.pop('label', f"Object {idx}")
+        label = kwargs.pop('label', f"Object {idx+1}")
         if prior["fx"]:
             ax.plot(y,x,label=label,**kwargs)
         else:
@@ -146,11 +146,103 @@ def generateGraphPerformance(data, frames, fig, ax, xlimits=[], ylimits=[]):
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             y_plot = polynom["f"](x_plot)
             if polynom["fxFlag"]:
-                ax[1].plot(y_plot,x_plot,linewidth=3, label=f"Ext track {ipol}")
+                ax[1].plot(y_plot,x_plot,linewidth=3, label=f"Ext track {ipol+1}")
             else:
-                ax[1].plot(x_plot,y_plot,linewidth=3, label=f"Ext track {ipol}")
+                ax[1].plot(x_plot,y_plot,linewidth=3, label=f"Ext track {ipol+1}")
         
     return fig, ax
+
+class PolynomsOnMapGraph():
+    def __init__(self):
+        self.counter = 0
+        
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, xlimits=[], ylimits=[]):
+        #Polynoms and GT on map
+        if self.counter == 0:
+            x_min = np.min(ego_path[:,0])
+            x_max = np.max(ego_path[:,0])
+            x_mean = 0.5*(x_min+x_max)
+            y_min = np.min(ego_path[:,1])
+            y_max = np.max(ego_path[:,1])
+            y_mean = 0.5*(y_min+y_max)
+            patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+
+            self.first_pos = [x_mean, y_mean]
+            self.patch_size = patch_size
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+
+            ax.imshow(edges, origin='lower')
+            ax.grid(False)
+            
+            xlim = xlimits if xlimits else [self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50]
+            ylim = ylimits if ylimits else [self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50]
+            
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+
+        for c,polynom in enumerate(polynoms):
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+            y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
+            ax.plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=1,label="polynoms") 
+        
+        ax.scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=2,color="green",label="GT")
+            
+        
+        return ax
+    
+    
+    
+def generateGraphCurve(video_data, polynoms, mm_results, ax, xlimits=[], ylimits=[], rotate=0, rotate_around=0):
+    colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
+                  "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
+    pc = video_data['pc']
+    img = video_data['img']
+    prior = video_data['prior']
+    pos = video_data['pos']
+    heading = video_data['heading']
+    pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+    imu_pos = np.array(video_data["pos_imu"][0:2])
+        
+    ax[0].imshow(img)
+    ax[0].grid(None)
+    ax[0].axis('off')
+    
+    R = np.array([[np.cos(rotate),-np.sin(rotate)], [np.sin(rotate),np.cos(rotate)]])
+    tx = pos[0] - imu_pos[0]
+    ty = pos[1] - imu_pos[1]
+    if xlimits:
+        ax[1].set_xlim(xlimits)
+        ax[1].set_ylim(ylimits)
+    for c,polynom in enumerate(polynoms):
+        xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+        x_plot = xx - tx if polynom["fxFlag"] else polynom["f"](xx) - ty
+        y_plot = polynom["f"](xx) - ty if polynom["fxFlag"] else xx - tx 
+        if rotate != 0:
+            X = np.array([x_plot, y_plot])
+            X -= rotate_around
+            T = np.dot(R, X) + rotate_around
+            x_plot = T[0, :]
+            y_plot = T[1, :]
+            
+        ax[1].plot(x_plot,y_plot,linewidth=3,color='gray')
+        
+    ego_pos = pos[0:2].reshape([2,1])
+    if rotate != 0:        
+        X = np.array([pc[:, 0], pc[:, 1]])
+        print("X.shape", X.shape)
+        X -= rotate_around
+        T = np.dot(R, X) + rotate_around
+        x_plot = T[0, :]
+        y_plot = T[1, :]
+        ego_pos = ego_pos - rotate_around
+        ego_pos = np.dot(R, ego_pos) + rotate_around
+    
+    ax[1].scatter(x_plot,y_plot,color='blue',s=1)
+    ax[1] = drawEgo(x0=ego_pos[0],y0=ego_pos[1],angle=heading+np.rad2deg(rotate),ax=ax[1],edgecolor='red', width=1.5, height=4)
+    
+    return ax
+
 """
 def something():
         
