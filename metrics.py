@@ -1,5 +1,7 @@
 import numpy as np
 from numpy.polynomial import polynomial as P
+from tqdm import tqdm
+import math
 
 def innerProductPolynoms(f1, f2, xmin, xmax):
         f1mf2 = P.polysub(f1,f2)
@@ -103,3 +105,55 @@ def ComputeNonOverlappingArea(res, prior, ipolynom):
     print(f"ComputeNonOverlappingArea: non_overlap_max for prior {prior} = {nonoverlap_max}")
     print("==================================================================================")
     print("==================================================================================")
+    
+    
+    
+def calcTrackPosition(ego_path, ego_trns, gt_pos, pf_pos, imu_pos):
+    #GT position
+    gt_cross_track = 0
+    it = np.argmin(np.linalg.norm(ego_path - np.array(gt_pos),axis=1),axis=0)
+    it = max(1, min(it, ego_trns.shape[0]-2))
+    gt_along_track = np.copy(ego_trns[it])
+    #PF position
+    it = np.argmin(np.linalg.norm(ego_path - np.array(pf_pos),axis=1),axis=0)
+    it = max(1, min(it, ego_path.shape[0]-2))
+    x,y,x1,y1,x2,y2 = pf_pos[0],pf_pos[1],ego_path[it-1][0], ego_path[it-1][1], ego_path[it+1][0], ego_path[it+1][1]
+    d=(x-x1)*(y2-y1)-(y-y1)*(x2-x1)
+    pf_cross_track = np.sign(d) * np.linalg.norm(ego_path[it]-pf_pos) #np.linalg.norm(np.cross(p2-p1, p1-pf_pos))/np.linalg.norm(p2-p1)
+    pf_along_track = np.copy(ego_trns[it])
+    #IMU position
+    it = np.argmin(np.linalg.norm(ego_path - np.array(imu_pos),axis=1),axis=0)
+    it = max(1, min(it, ego_path.shape[0]-2))
+    x,y,x1,y1,x2,y2 = imu_pos[0],imu_pos[1],ego_path[it-1][0], ego_path[it-1][1], ego_path[it+1][0], ego_path[it+1][1]
+    d=(x-x1)*(y2-y1)-(y-y1)*(x2-x1)
+    imu_cross_track = np.sign(d) * np.linalg.norm(ego_path[it]-imu_pos)
+    imu_along_track = np.copy(ego_trns[it])
+
+    return np.array([gt_cross_track, gt_along_track]), np.array([pf_cross_track, pf_along_track]), np.array([imu_cross_track, imu_along_track])
+    
+
+def calc_rmse(ego_path, ego_trns, gt_pos, pf_mean_pos, imu_pos):
+    gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
+    print("gt_track_pos[1]", gt_track_pos[1])
+    pf_track_errors = pf_track_pos - gt_track_pos
+    imu_track_errors = imu_track_pos - gt_track_pos
+
+    return pf_track_errors, imu_track_errors
+    
+def calc_acc_rmse(ego_path, ego_trns, pf_mean_pos, imu_pos, N):
+    pf_rmse_lateral = np.zeros(N)
+    pf_rmse_longitudal = np.zeros(N)
+    imu_rmse_lateral = np.zeros(N)
+    imu_rmse_longitudal = np.zeros(N)
+    for i in tqdm(range(0,N)):
+        pf_track_errors, imu_track_errors = calc_rmse(ego_path, ego_trns, ego_path[i,:], pf_mean_pos[i,:], imu_pos[i,:])
+        print("pf_track_errors",pf_track_errors,"imu_track_errors",imu_track_errors)
+        pf_rmse_lateral[i] = pf_track_errors[0]
+        pf_rmse_longitudal[i] = pf_track_errors[1]
+        imu_rmse_lateral[i] = imu_track_errors[0]
+        imu_rmse_longitudal[i] = imu_track_errors[1]
+
+    print(f"PF RMSE lateral: {math.sqrt((1. / N) * np.sum(pf_rmse_lateral**2))}")
+    print(f"PF RMSE longitudal: {math.sqrt((1. / N) * np.sum(pf_rmse_longitudal**2))}")
+    print(f"IMU RMSE lateral: {math.sqrt((1. / N) * np.sum(imu_rmse_lateral**2))}")
+    print(f"IMU RMSE longitudal: {math.sqrt((1. / N) * np.sum(imu_rmse_longitudal**2))}")
