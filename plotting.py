@@ -543,6 +543,84 @@ def generateGraphPath(data, frames, nusc_map, ax, xlimits=[], ylimits=[]):
         
     return ax
 
+def generateGraphCurve(video_data, polynoms, mm_results, ax, draw_polynoms=True, xlimits=[], ylimits=[]):
+    colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
+                  "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
+    pc = video_data['pc']
+    img = video_data['img']
+    prior = video_data['prior']
+    pos = video_data['pos']
+    heading = video_data['heading']
+    pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+    imu_pos = np.array(video_data["pos_imu"][0:2])
+        
+    ax[0].imshow(img)
+    ax[0].grid(None)
+    ax[0].axis('off')
+    
+    if xlimits:
+        ax[1].set_xlim(xlimits)
+        ax[1].set_ylim(ylimits)
+    
+    
+    ego_pos = pos[0:2].reshape([2,1])
+    if draw_polynoms:
+        for c,polynom in enumerate(polynoms):
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx - tx if polynom["fxFlag"] else polynom["f"](xx) - ty
+            y_plot = polynom["f"](xx) - ty if polynom["fxFlag"] else xx - tx 
+            ax[1].plot(x_plot,y_plot,linewidth=3,color='gray')
+            
+        ax[1] = drawEgo(x0=ego_pos[0],y0=ego_pos[1],angle=heading+np.rad2deg(rotate),ax=ax[1],edgecolor='red', width=1.5, height=4)
+        
+    
+    ax[1].scatter(x_plot,y_plot,color='blue',s=1)
+    
+    
+    return ax
+
+class PolynomsOnMapWithCameraGraph():
+    def __init__(self):
+        self.counter = 0
+        
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, img, fig, ax, xlimits=[], ylimits=[]):
+        
+        ax[0].imshow(img)
+        ax[0].grid(None)
+        ax[0].axis('off')
+        
+        #Polynoms and GT on map
+        if self.counter == 0:
+            x_min = np.min(ego_path[:,0])
+            x_max = np.max(ego_path[:,0])
+            x_mean = 0.5*(x_min+x_max)
+            y_min = np.min(ego_path[:,1])
+            y_max = np.max(ego_path[:,1])
+            y_mean = 0.5*(y_min+y_max)
+            patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+
+            self.first_pos = [x_mean, y_mean]
+            self.patch_size = patch_size
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+
+            ax[1].imshow(edges, origin='lower')
+            ax[1].grid(False)
+            
+            xlim = xlimits if xlimits else [self.patch_size/2 - (x_mean-x_min) - 50,self.patch_size/2 + (x_max-x_mean) + 50]
+            ylim = ylimits if ylimits else [self.patch_size/2 - (y_mean-y_min) - 50,self.patch_size/2 + (y_max-y_mean) + 50]
+            
+            ax[1].set_xlim(xlim)
+            ax[1].set_ylim(ylim)
+
+        for c,polynom in enumerate(polynoms):
+            xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+            x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+            y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
+            ax[1].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=1,label="polynoms") 
+        
+        ax[1].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=2,color="green",label="GT")    
+        
+        return ax
     """
 def something():
         
