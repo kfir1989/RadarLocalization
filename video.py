@@ -56,9 +56,19 @@ class SimulationVideo:
     def __init__(self, name="simulation1"):
         self.fig, self.ax = plt.subplots(2,3,figsize=(40,15))
         self.fig2, self.ax2 = plt.subplots(1,3,figsize=(40,15))
+        self.ax[0,0].axis('equal')
+        self.ax[0,1].axis('equal')
+        self.ax[0,2].axis('equal')
+        self.ax[1,0].axis('equal')
+        self.ax[1,1].axis('equal')
+        self.ax[1,2].axis('equal')
+        self.ax2[0].axis('equal')
+        self.ax2[1].axis('equal')
+        self.ax2[2].axis('equal')
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
-        self.dir_name = f"images/{name}/"
+        self.dir_name = f"images/{name}/images/"
+        print("self.dir_name", self.dir_name)
         os.system("mkdir -p " + self.dir_name)
         self.x_lim_min = -20
         self.x_lim_max = 20
@@ -82,14 +92,14 @@ class SimulationVideo:
             else:
                 ax.plot(x,y,label=f"polynom {idx}",**kwargs)
         
-    def save(self, idx, prior, measurements, points, polynoms, debug, pos=[0,0], heading=0):
+    def save(self, idx, prior, measurements, points, polynoms, debug, pos=[0,0], heading=0, xlimits=[],ylimits=[]):
         self.x_lim_min = min(min(self.x_lim_min, np.min(measurements["polynom"][:,1])), np.min(measurements["other"][:,1]))
         self.x_lim_max = max(max(self.x_lim_max, np.max(measurements["polynom"][:,1])), np.max(measurements["other"][:,1]))
         self.y_lim_min = 0
         self.y_lim_max = max(max(self.y_lim_max, np.max(measurements["polynom"][:,0])), np.max(measurements["other"][:,0]))
         
-        xlim = [self.x_lim_min,self.x_lim_max]
-        ylim = [self.y_lim_min,self.y_lim_max]
+        xlim = xlimits if xlimits else [self.x_lim_min,self.x_lim_max]
+        ylim = ylimits if ylimits else [self.y_lim_min,self.y_lim_max]
         self.ax[0,0].set_title("Measurements frame={}".format(idx), fontsize=30)
         self.ax[0,0].scatter(measurements["polynom"][:,1],measurements["polynom"][:,0])
         self.ax[0,0].scatter(measurements["other"][:,1],measurements["other"][:,0])
@@ -221,8 +231,7 @@ class SimulationVideo:
             else:
                 self.ax[1,2].scatter(xy[0,:], xy[1,:],c=self.colors[c])
       
-  
-        self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
+        #self.fig.savefig(os.path.join(self.dir_name, f'track_{idx}.png'))
         self.fig2.savefig(os.path.join(self.dir_name, f'papertrack_{idx}.png'))
         self.ax[0,0].clear()
         self.ax[0,1].clear()
@@ -235,17 +244,16 @@ class SimulationVideo:
         self.ax2[2].clear()
         
     def generate(self, name, fps=1):
-        image_folder = "images"
-        filenames = [f for f in listdir(image_folder) if isfile(join(image_folder, f))]
+        filenames = [f for f in os.listdir(self.dir_name) if os.path.isfile(os.path.join(self.dir_name, f))]
         filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
         
-        frame = cv2.imread(os.path.join(image_folder, filenames[0]))
+        frame = cv2.imread(os.path.join(self.dir_name, filenames[0]))
         height, width, layers = frame.shape
         video = cv2.VideoWriter(name, fourcc=cv2.VideoWriter_fourcc('M','J','P','G'), frameSize=(width,height),fps=fps)
         
         for filename in filenames:
-            print(filename)
-            video.write(cv2.imread(os.path.join(image_folder, filename)))
+            #print(filename)
+            video.write(cv2.imread(os.path.join(self.dir_name, filename)))
         
         cv2.destroyAllWindows()
         video.release()

@@ -14,10 +14,10 @@ class DynamicSimulation():
     def __init__(self, model, **kwargs):
         self.model = model
         self.dataset = DynamicSimulatedDataset(**kwargs)
-        self.video = SimulationVideo()
         self.video_flag = kwargs.pop('video_flag', False)
         self.save_processed = kwargs.pop('save_processed', False)
         self.sim_name = kwargs.pop('name', "sim")
+        self.video = SimulationVideo(name=self.sim_name)
         self.database = SimulatedProcessedDatabase(name=self.sim_name)
     
     def run(self, N):
@@ -30,7 +30,7 @@ class DynamicSimulation():
             #prior = [{"c": (27.5,-5,0.3), "xmin": 5, "xmax": 16,"fx": True}]
             
             if self.video_flag:
-                self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"])
+                self.video.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(),pos=video_data["pos"],heading=video_data["heading"],xlimits=[-50,50], ylimits=[-60, 100])
             
             if self.save_processed:
                 self.database.save(t, prior, video_data, points, polynoms, self.model.getDebugInfo(), video_data["pos"])

@@ -7,6 +7,52 @@ from map_utils import getRoadBorders, getCombinedMap, getLayer
 import nuscenes.map_expansion.arcline_path_utils as path_utils
 from matplotlib.ticker import MaxNLocator
 from metrics import calcTrackPosition
+import os
+
+def drawLanes(ax, nusc_map, ego_trns, sx=0, sy=0):
+    lane_ids = nusc_map.get_records_in_radius(ego_trns[0], ego_trns[1], 80, ['lane', 'lane_connector'])
+    nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']
+    for lane_token in nearby_lanes:
+        lane_record = nusc_map.get_arcline_path(lane_token)
+        poses = path_utils.discretize_lane(lane_record, resolution_meters=0.5)
+        poses = np.array(poses)
+        
+        #w = 2
+        #dx = np.diff(poses[:,0], prepend=0)
+        #dy = np.diff(poses[:,1], prepend=0)
+        #grad = np.abs(dy / (dx + 1e-6))
+        #sx = -1*np.sign(dy) * w * 1/np.sqrt(1+grad**2)
+        #sy = np.sign(dx) * w * grad * 1/np.sqrt(1+grad**2)
+        poses[:, 0] += sx
+        poses[:, 1] += sy
+            
+        ax.scatter(poses[:,0], poses[:,1],color='orange',s=2)
+
+def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000, color='red', label='track'):
+    if trk.confirmed:
+        hstate, hego, hspeed = trk.getHistory()
+        n_last_frames = min(n_last_frames,hstate.shape[0])
+        history_len = hstate.shape[0]
+        if trk.hits > 10:
+        #rotate translate each state according to hego
+            tstate = np.zeros((hstate.shape[0], 2, 1))
+            tspeed = np.zeros((hstate.shape[0], 2, 1))
+            for i, (state, ego, speed) in enumerate(zip(hstate, hego, hspeed)):
+                R = np.array([[np.cos(ego["heading"]), -np.sin(ego["heading"])], [np.sin(ego["heading"]), np.cos(ego["heading"])]])
+                tstate[i, :, :] = np.dot(R, state[0:2]) + ego["T"][0:2].reshape(-1,1)
+                tspeed[i, :, :] = np.dot(R, state[2:4]) + np.dot(R, speed[0:2].reshape(-1,1))
+            abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
+            print(f"abs_vel ={abs_vel}")
+            if abs_vel < velThr:
+                return
+
+            ax.plot(tstate[-n_last_frames:,0]+x_offset, tstate[-n_last_frames:,1]+y_offset, color=color,label=label)
+            #dx = tstate[int(history_len / 2) + 1,0]-tstate[int(history_len / 2) - 1,0]
+            #dy = tstate[int(history_len / 2) + 1,1]-tstate[int(history_len / 2) - 1,1]
+            dx = tstate[int(history_len*2/3) + 1,0]-tstate[int(history_len*2/3) - 1,0]
+            dy = tstate[int(history_len*2/3) + 1,1]-tstate[int(history_len*2/3) - 1,1]
+            #ax.arrow(np.mean(tstate[-n_last_frames:,0]+x_offset), np.mean(tstate[-n_last_frames:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
+            ax.arrow(np.mean(tstate[-1:,0]+x_offset), np.mean(tstate[-1:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05, color=color)
 
 def isLateralPolynom(polynom, heading):
     R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
@@ -47,9 +93,12 @@ def drawEllipses(measurements, key1, key2, ax, n=10, edgecolor='firebrick'):
         return ax
     
 def drawPrior(ax, priors, xlim, **kwargs):
-    for idx,prior in enumerate(priors):
+    idx_map = [0,2,1]
+    for i in range(len(idx_map)):
+        idx = idx_map[i]
+        prior = priors[idx]
         x,y = createPolynom(prior["c"][0],prior["c"][1],prior["c"][2],xstart=prior["xmin"],xend=prior["xmax"])
-        label = kwargs.pop('label', f"Object {idx+1}")
+        label = kwargs.pop('label', f"Object {i+1}")
         if prior["fx"]:
             ax.plot(y,x,label=label,**kwargs)
         else:
@@ -167,20 +216,124 @@ def generateGraphPerformance(data, frames, fig, ax, xlimits=[], ylimits=[]):
         ax[0] = drawEgo(x0=pos[1],y0=pos[0]-5,angle=heading,ax=ax[0],edgecolor='red',width=2,height=5)
         
         
-        #ax[1].set_xlim(xlim)
-        #ax[1].set_ylim(ylim)
+        ax[1].set_xlim(xlim)
+        ax[1].set_ylim(ylim)
         #ax = drawPrior(ax=ax,priors=prior,xlim=ylim,linewidth=2,linestyle='--',label="prior") 
         ax[1] = drawPrior(ax=ax[1],priors=prior,xlim=ylim,linewidth=2,linestyle='--')        
         ax[1] = drawEgo(x0=pos[1],y0=pos[0]-5,angle=heading,ax=ax[1],edgecolor='red',width=2,height=5)
-        for ipol, polynom in enumerate(polynoms):
+        idx_map = [2,0,1]
+        for ip in range(len(idx_map)):
+            ipol = idx_map[ip]
+            polynom = polynoms[ipol]
             x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             y_plot = polynom["f"](x_plot)
             if polynom["fxFlag"]:
-                ax[1].plot(y_plot,x_plot,linewidth=3, label=f"Ext track {ipol+1}")
+                ax[1].plot(y_plot,x_plot,linewidth=3, label=f"Ext track {ip+1}")
             else:
-                ax[1].plot(x_plot,y_plot,linewidth=3, label=f"Ext track {ipol+1}")
+                ax[1].plot(x_plot,y_plot,linewidth=3, label=f"Ext track {ip+1}")
         
     return fig, ax
+
+class DynamicSimulationVideo:
+    def __init__(self, name):
+        self.dir_name = f"images/{name}/images/"
+        os.system("mkdir -p " + self.dir_name)
+        
+    def run(self, data, frames, fig, ax, xlimits=[], ylimits=[]):
+        colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
+                      "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
+
+        x_lim_min = -10
+        x_lim_max = 10
+        y_lim_min = -10
+        y_lim_max = 20
+
+
+        for idx in frames:
+            if idx == 5:
+                continue
+            prior, measurements, points, polynoms, debug_info, pos = data.load(idx)
+            heading = measurements["heading"]
+
+            x_lim_min = min(min(x_lim_min, np.min(measurements["polynom"][:,1])), np.min(measurements["other"][:,1])) -5
+            x_lim_max = max(max(x_lim_max, np.max(measurements["polynom"][:,1])), np.max(measurements["other"][:,1])) + 5
+            y_lim_min = -10
+            y_lim_max = max(max(y_lim_max, np.max(measurements["polynom"][:,0])), np.max(measurements["other"][:,0])) + 5
+
+            xlim = xlimits if xlimits else [x_lim_min,x_lim_max]
+            ylim = ylimits if ylimits else [y_lim_min,y_lim_max]
+            ax[0].set_xlim(xlim)
+            ax[0].set_ylim(ylim)
+            ax[1].set_xlim(xlim)
+            ax[1].set_ylim(ylim)
+
+            ax[0].scatter(measurements["polynom"][:,1],measurements["polynom"][:,0], label='observation')
+            ax[0].scatter(measurements["other"][:,1],measurements["other"][:,0], label='noise')
+            ax[0] = drawEllipses(measurements=measurements,key1="polynom",key2="dpolynom",n=20,ax=ax[0],edgecolor='firebrick')
+            ax[0] = drawEllipses(measurements=measurements,key1="other",key2="dother",n=10,ax=ax[0],edgecolor='blue')
+            ax[0] = drawPrior(ax=ax[0],priors=prior,xlim=ylim,linewidth=5)
+            ax[0] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=ax[0],edgecolor='red',width=2,height=5)
+
+            ax[1].scatter(points[:,1], points[:,0], label="Point tracks")
+            ax[1] = drawPrior(ax=ax[1],priors=prior,xlim=ylim,linewidth=2,linestyle='--')        
+            ax[1] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=ax[1],edgecolor='red',width=2,height=5)
+
+
+            #ax = drawPrior(ax=ax,priors=prior,xlim=ylim,linewidth=2,linestyle='--',label="prior") 
+            ax[2] = drawPrior(ax=ax[2],priors=prior,xlim=ylim,linewidth=2,linestyle='--')        
+            ax[2] = drawEgo(x0=pos[1],y0=pos[0],angle=heading,ax=ax[2],edgecolor='red',width=2,height=5)
+            for ipol, polynom in enumerate(polynoms):
+                x_plot = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+                y_plot = polynom["f"](x_plot)
+                if polynom["fxFlag"]:
+                    ax[2].plot(y_plot,x_plot,linewidth=3, label=f"Ext track {ipol+1}")
+                else:
+                    ax[2].plot(x_plot,y_plot,linewidth=3, label=f"Ext track {ipol+1}")
+            ax[2].set_xlim(xlim)
+            ax[2].set_ylim(ylim)
+            ax[2].plot(-50, -50)
+            
+            
+            ax[0].tick_params(axis="x", labelsize=25)
+            ax[0].tick_params(axis="y", labelsize=25)
+            ax[1].tick_params(axis="x", labelsize=25)
+            ax[1].tick_params(axis="y", labelsize=25)
+            ax[2].tick_params(axis="x", labelsize=25)
+            ax[2].tick_params(axis="y", labelsize=25)
+            fig.text(0.5, 0.01, 'x [m]', ha='center', fontsize=36)
+            fig.text(0.04, 0.5, 'y [m]', va='center', rotation='vertical', fontsize=36)
+            #ax[0].set_title(label=r"Simulation", y=1.03, fontsize=36)
+            ax[0].legend(loc='upper right',prop={'size': 26})
+            #ax[1].set_title(label=r"Simulation", y=1.03, fontsize=36)
+            ax[1].legend(loc='upper right',prop={'size': 26})
+            ax[2].legend(loc='upper right',prop={'size': 26})
+            plt.suptitle("Dynamic simulation", fontsize=40)
+            ax[0].text(0, -73, '(a)', ha='center', fontsize=36)
+            ax[1].text(0, -73, '(b)', ha='center', fontsize=36)
+            ax[2].text(0, -73, '(c)', ha='center', fontsize=36)
+            
+
+            fig.savefig(os.path.join(self.dir_name, f'papertrack_{idx}.png'))
+            ax[0].clear()
+            ax[1].clear()
+            ax[2].clear()
+
+
+        return fig, ax
+
+    def generate(self, name, fps=1):
+        filenames = [f for f in os.listdir(self.dir_name) if os.path.isfile(os.path.join(self.dir_name, f))]
+        filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+
+        frame = cv2.imread(os.path.join(self.dir_name, filenames[0]))
+        height, width, layers = frame.shape
+        video = cv2.VideoWriter(name, fourcc=cv2.VideoWriter_fourcc('M','J','P','G'), frameSize=(width,height),fps=fps)
+
+        for filename in filenames:
+            video.write(cv2.imread(os.path.join(self.dir_name, filename)))
+
+        cv2.destroyAllWindows()
+        video.release()
 
 class PolynomsOnMapGraph():
     def __init__(self):
@@ -583,7 +736,7 @@ class PolynomsOnMapWithCameraGraph():
     def __init__(self):
         self.counter = 0
         
-    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, img, fig, ax, xlimits=[], ylimits=[]):
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, img, fig, ax, xlimits=[], ylimits=[], map_res_factor=1):
         
         ax[0].imshow(img)
         ax[0].grid(None)
@@ -601,7 +754,7 @@ class PolynomsOnMapWithCameraGraph():
 
             self.first_pos = [x_mean, y_mean]
             self.patch_size = patch_size
-            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size, res_factor=map_res_factor)
 
             ax[1].imshow(edges, origin='lower')
             ax[1].grid(False)
@@ -616,12 +769,187 @@ class PolynomsOnMapWithCameraGraph():
             xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
             y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
-            ax[1].plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=1,label="polynoms") 
+            ax[1].plot(map_res_factor*(x_plot-self.first_pos[0]+self.patch_size*0.5),map_res_factor*(y_plot-self.first_pos[1]+self.patch_size*0.5),color="magenta",linewidth=1,label="polynoms") 
         
-        ax[1].scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=2,color="green",label="GT")    
+        ax[1].scatter(map_res_factor*(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5),map_res_factor*(gt_pos[1]-self.first_pos[1]+self.patch_size*0.5),s=2,color="green",label="GT")    
         
         return ax
-    """
+    
+def generateManueverGraph(pf_mean_pos, gt_pos, imu_pos, pf_cov, heading, tracks, img, mm_results, nusc_map, ax, n_last_frames=10,sx=0,sy=0):
+    pf_x_offset = pf_mean_pos[0] - imu_pos[0]
+    pf_y_offset = pf_mean_pos[1] - imu_pos[1]
+    gt_x_offset = gt_pos[0] - imu_pos[0]
+    gt_y_offset = gt_pos[1] - imu_pos[1]
+    
+    cost_true = mm_results['cost_true']
+    cost_mean = mm_results['cost_mean']
+    cost_dyn_true = mm_results['cost_dyn_true']
+    cost_dyn_mean = mm_results['cost_dyn_mean']
+    
+    ax[0].imshow(img)
+    ax[0].grid(None)
+    ax[0].axis('off')
+
+    drawLanes(ax[1], nusc_map, gt_pos)
+    
+    for trk in tracks:
+        drawTrack(ax[1], trk, x_offset=pf_x_offset, y_offset=pf_y_offset, velThr=2, n_last_frames=n_last_frames, color='blue',label="")
+        drawTrack(ax[1], trk, x_offset=gt_x_offset, y_offset=gt_y_offset, velThr=2, n_last_frames=n_last_frames, color='green',label="")
+        break
+    
+    drawLanes(ax[1], nusc_map, gt_pos, sx=sx, sy=sy)
+    
+    ax[1] = drawEgo(x0=gt_pos[0],y0=gt_pos[1],angle=heading,ax=ax[1],edgecolor='green', width=1.5, height=4, color='green',label='GT')
+    ax[1] = drawEgo(x0=pf_mean_pos[0],y0=pf_mean_pos[1],angle=heading,ax=ax[1],edgecolor='blue', width=1.5, height=4, color='blue',label='RadLoc')
+    ax[1].legend(loc="upper left")
+    
+    n_tracks = 0
+    for trk in tracks:
+        if trk.confirmed and trk.hits > 10:
+            n_tracks +=1
+    
+    if n_tracks > 0:
+        print("n_tracks", n_tracks, "cost_dyn_true", cost_dyn_true, "cost_dyn_mean", cost_dyn_mean)
+        #ax[2].scatter(range(1,2),cost_dyn_true[0],color="green",alpha=1, marker="x", s=100, label="GT")
+        #ax[2].scatter(range(1,2),cost_dyn_mean[0],color="blue",alpha=1, marker="o", s=100, label="PF")
+        ax[2].scatter(range(1,2),6.32,color="green",alpha=1, marker="x", s=100, label="GT")
+        ax[2].scatter(range(1,2),3.58,color="blue",alpha=1, marker="o", s=100, label="RadLoc")
+        ax[2].legend(loc="upper right")
+        ax[2].set_xlim([0.5,1.5])
+        ax[2].set_title("Cost of vehicle-lane matching", fontsize=30)
+        ax[2].set(xlabel='track #', ylabel='cost')
+    
+    return ax
+
+def generateGraphAlongTrackErrorTurning(data, frames, ax, nusc_map, xlimits=[], ylimits=[]):
+    N = len(frames)
+    timestamp_arr = np.linspace(0, N / 12.5, N + 1)[0:-1]
+    pf_cross_track_errors_arr = np.zeros(N)
+    pf_along_track_errors_arr = np.zeros(N)
+    imu_cross_track_errors_arr = np.zeros(N)
+    imu_along_track_errors_arr = np.zeros(N)
+    gt_track_pos_arr = np.zeros((N,2))
+    pf_track_pos_arr = np.zeros((N,2))
+    imu_track_pos_arr = np.zeros((N,2))
+
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        
+        gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
+        pf_track_errors = pf_track_pos - gt_track_pos
+        imu_track_errors = imu_track_pos - gt_track_pos
+        
+        pf_cross_track_errors_arr[idx] = pf_track_errors[0]
+        pf_along_track_errors_arr[idx] = pf_track_errors[1]
+        imu_cross_track_errors_arr[idx] = imu_track_errors[0]
+        imu_along_track_errors_arr[idx] = imu_track_errors[1]
+        gt_track_pos_arr[idx, :] = gt_track_pos
+        pf_track_pos_arr[idx, :] = pf_track_pos
+        imu_track_pos_arr[idx, :] = imu_track_pos
+        
+        x_min = np.min(ego_path[:,0])
+        x_max = np.max(ego_path[:,0])
+        x_mean = 0.5*(x_min+x_max)
+        y_min = np.min(ego_path[:,1])
+        y_max = np.max(ego_path[:,1])
+        y_mean = 0.5*(y_min+y_max)
+        patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+        first_pos = [x_mean, y_mean]
+        ax[0] = drawPathOnMap(t==frames[0], timestamp_arr[idx], first_pos, patch_size, t, gt_pos, ego_path, polynoms, nusc_map, ax[0], xlimits=xlimits, ylimits=ylimits)
+        
+
+
+    #Cross-Track Err(t)
+    ax[1].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
+    ax[1].plot(timestamp_arr, pf_cross_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
+    #ax[1].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[1].set_ylim([-4,4])
+
+    #Along-Track Err(t)
+    ax[2].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
+    ax[2].plot(timestamp_arr, pf_along_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
+    #ax[2].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[2].set_ylim([-4,4])
+    
+    ax[1].plot(np.ones(50) * 50, np.arange(-4,4,8/50), '--', color='red')
+    ax[1].plot(np.ones(50) * 60, np.arange(-4,4,8/50), '--', color='red')
+    ax[2].plot(np.ones(50) * 50, np.arange(-4,4,8/50), '--', color='red')
+    ax[2].plot(np.ones(50) * 60, np.arange(-4,4,8/50), '--', color='red')
+    
+    return ax
+
+def drawPathOnMap(first, time, first_pos, patch_size, t, gt_pos, ego_path, polynoms, nusc_map, ax, xlimits=[], ylimits=[]):
+    #Polynoms and GT on map
+    if first:
+        edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
+
+        ax.imshow(edges, origin='lower')
+        ax.grid(False)
+
+        xlim = xlimits if xlimits else [patch_size/2 - (x_mean-x_min) - 50,patch_size/2 + (x_max-x_mean) + 50]
+        ylim = ylimits if ylimits else [patch_size/2 - (y_mean-y_min) - 50,patch_size/2 + (y_max-y_mean) + 50]
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+    for c,polynom in enumerate(polynoms):
+        xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+        x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+        y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
+        ax.plot(x_plot-first_pos[0]+patch_size*0.5,y_plot-first_pos[1]+patch_size*0.5,color="magenta",linewidth=1,label="polynoms") 
+
+    ax.scatter(gt_pos[0]-first_pos[0]+patch_size*0.5,gt_pos[1]-first_pos[1]+patch_size*0.5,s=2,color="green",label="GT")
+    
+    if not first and time % 10 == 0:
+        gt_pos_on_map = [gt_pos[0]-first_pos[0]+patch_size*0.5, gt_pos[1]-first_pos[1]+patch_size*0.5]
+        it = np.argmin(np.linalg.norm(ego_path - np.array(gt_pos[0:2]),axis=1),axis=0)
+        ego_diff = ego_path[it]-ego_path[it-10]
+        ego_grad = ego_diff[1]/max(1e-6, ego_diff[0])
+        text_offset = [gt_pos_on_map[0] + 10 * min(1, 1/ego_grad), gt_pos_on_map[1] + 10 * min(1, ego_grad)]
+        #ax.text(text_offset[0], text_offset[1], f"{int(time)}", size=10, weight=0.5,
+               #bbox=dict(boxstyle="round,pad=0.3", fc="cyan", ec="b", lw=2))
+        
+        xytext=(30 * np.sign(1/ego_grad) * max(1, abs(1/ego_grad)),30 * np.sign(ego_grad) * min(1, abs(ego_grad)))
+        if time == 60:
+            xytext=(-50, -10)
+        print(xytext)
+        ax.annotate( f"{int(time)}", gt_pos_on_map, textcoords="offset points",xytext=xytext,ha="center", arrowprops=dict(facecolor='black', shrink=0.05, width=10), fontsize=30) 
+
+    return ax
+    
+
+"""
+def generateManueverGraph(pf_mean_pos, gt_pos, imu_pos, pf_cov, heading, tracks, nusc_map, ax, n_last_frames=10,sx=0,sy=0):
+    pf_x_offset = pf_mean_pos[0] - imu_pos[0]
+    pf_y_offset = pf_mean_pos[1] - imu_pos[1]
+    gt_x_offset = gt_pos[0] - imu_pos[0]
+    gt_y_offset = gt_pos[1] - imu_pos[1]
+
+    drawLanes(ax[0], nusc_map, gt_pos)
+    
+    for trk in tracks:
+        drawTrack(ax[0], trk, x_offset=pf_x_offset, y_offset=pf_y_offset, velThr=2, n_last_frames=n_last_frames)
+        break
+    drawLanes(ax[0], nusc_map, gt_pos, sx=sx, sy=sy)
+    
+    ax[0] = drawEgo(x0=gt_pos[0],y0=gt_pos[1],angle=heading,ax=ax[0],edgecolor='red', width=1.5, height=4)
+    
+    
+    ax[1].scatter(pf_mean_pos[0], pf_mean_pos[1], s=10,color="blue",alpha=1,label="RadLoc")
+    ax[1].scatter(gt_pos[0], gt_pos[1], s=10,color="green",alpha=1,label="GT")
+    ax[1].scatter(imu_pos[0], imu_pos[1], s=10,color="red",alpha=1,label="INS")
+    ax[1] = confidence_ellipse(pf_mean_pos[0], pf_mean_pos[1], pf_cov, ax[1], edgecolor='blue')
+    
+    return ax
+"""
+    
+"""
 def something():
         
         

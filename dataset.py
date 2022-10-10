@@ -14,6 +14,7 @@ from nuscenes.utils.geometry_utils import transform_matrix
 from pyquaternion import Quaternion
 from nuscenes.utils.data_classes import RadarPointCloud
 import matplotlib.image as mpimg
+import math
 
 
 class Dataset():
@@ -25,8 +26,8 @@ class Dataset():
 
 class DynamicSimulatedDataset(Dataset):
     def __init__(self, **kwargs):
-        x0 = kwargs.pop('x0', (0,0))
-        v0 = kwargs.pop('v0', 0)
+        x0 = kwargs.pop('x0', (40,40))
+        v0 = kwargs.pop('v0', 5)
         a0 = kwargs.pop('a0', 0)
         N = kwargs.pop('N', 150)
         self.prior = kwargs.pop('prior', [(1, 0.009, -0.004, 3, 40, True), (1, 0.009, -0.004, 60, 90, True)])
@@ -36,11 +37,12 @@ class DynamicSimulatedDataset(Dataset):
         #self.prior = [(30,0,0.2,-15,15,False)] #t0 offset
         #self.prior = [(35,-2,0.2,-10,20,False)] #x0 offset
         #self.prior = [(35,0,0.2,-15,15,False)] #y0 offset
+        path = [0,  0.17, 0.01998]
         dR = kwargs.pop('dR', 0.4)
         dAz = kwargs.pop('dAz', 0.02)
-        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.2) #1:1
+        polynom_noise_ratio = kwargs.pop('polynom_noise_ratio', 0.6) #1:1
         seed = kwargs.pop('seed', None)
-        self.__generateEgoMotion(x0=np.asarray(x0), v0=v0, a0=a0, path=self.prior[0], N=N, dT=0.1)
+        self.__generateEgoMotion(x0=np.asarray(x0), v0=v0, a0=a0, path=path, N=N, dT=0.1, d00=[-1,-1.4])
         self.dR, self.dAz, self.polynom_noise_ratio = dR, dAz, polynom_noise_ratio
         self.N = N
         
@@ -50,7 +52,7 @@ class DynamicSimulatedDataset(Dataset):
         z, dz = np.array([], dtype=np.float).reshape(0,2), np.array([], dtype=np.float).reshape(0,2,2)
         xmin, xmax = 300, 0
         for prior in self.prior:
-            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=50)
+            zp,dzp = self.__generateData(prior=prior, dR=self.dR, dAz=self.dAz, pos=pos, R=self.R[:,:,t], N=30)
             z, dz = np.concatenate([z, zp]), np.concatenate([dz, dzp])
             xmin = min(xmin, np.min(z[:,0]))
             xmax = max(xmax, np.max(z[:,0]))
@@ -63,16 +65,20 @@ class DynamicSimulatedDataset(Dataset):
         
         zw, covw = self.__convert2WorldCoordinates(z, dz, self.R[:,:,t], self.t[:,t].reshape(2,1))
         #print("data_size",data_size,"zw.shape", zw.shape)
+        #print("z", z, "zw", zw)
         video_data = {"polynom":zw[0:data_size,:],"dpolynom":covw[0:data_size,:,:], "other":zw[data_size:,:],"dother":covw[data_size:,:,:],
                      "pos":pos,"heading":heading}
+        
+        #print("heading", heading)
         
         prior = self.__generatePrior(self.prior2)
         
         return zw, covw, prior, video_data
         
     def __generateData(self, prior, dR, dAz, pos, R, N=50):
-        #if not prior[5]:
-            #pos = np.array([-5,0])
+        if not prior[5]:
+            pos = np.array([pos[1],pos[0]])
+            R = np.linalg.inv(R)
         [_,_,x_poly,y_poly,polynom_cov] = generatePolynomNoisyPoints(N=N,a1=prior[0],a2=prior[1],a3=prior[2],dR=dR,dAz=dAz,xRange=[prior[3],prior[4]],pos=pos,R=np.linalg.inv(R))
         if prior[5]:
             z = np.array([x_poly, y_poly]).T
@@ -84,11 +90,18 @@ class DynamicSimulatedDataset(Dataset):
         return z,dz
     
     def __generateNoise(self, xRange, dR, dAz, pos, R, N=50):
-        xRange[0]=min(5, xRange[0])
-        xRange[1]=max(50,xRange[1])
+        xRange[0]= 10#min(5, xRange[0])
+        xRange[1]= 150#max(50,xRange[1])
         
         [x_noise,y_noise,noise_cov] = generateRandomNoisyPoints(N=N,xRange=xRange,yRange=[np.deg2rad(-60), np.deg2rad(60)],dR=dR,dAz=dAz)
         z = np.array([x_noise, y_noise]).T
+        z = np.matmul(np.linalg.inv(R), np.array([x_noise, y_noise]))
+        z = np.matmul(np.linalg.inv(R), z)
+        z = np.matmul(np.array([[-1, 0],[0, -1]]), z)
+        #z = np.flip(z)
+        #print("pos", pos, "z",z)
+        z = z.T
+        #print("R",R)
         dz = np.array(noise_cov)
         
         return z,dz
@@ -108,21 +121,22 @@ class DynamicSimulatedDataset(Dataset):
         return prior_list
             
     
-    def __generateEgoMotion(self, x0, v0, a0, path, N, dT):
+    def __generateEgoMotion(self, x0, v0, a0, path, N, dT, d00=[1,0]):
         dist = np.arange(0,N)*dT*(v0+a0*dT)
         c,b,a = path[0],path[1],path[2]
         x = (np.power(3*a*dist + np.power(b+1,3./2), 2./3)-b-1)/(2*a)
-        y = a*x**2+b*x+c - 5
-        self.path = np.array([x, y])
-        d0 = np.array([1,0]).reshape(1,2)
+        y = a*x**2+b*x+c
+        self.path = np.array([y, x])
+        d0 = np.array(d00).reshape(1,2)
         di = np.array([np.repeat(1,x.shape), 2*a*x])
         
         angle = np.arctan2(d0[:,0]*di[1,:]-d0[:,1]*di[0,:],d0[:,0]*di[0,:]+d0[:,1]*di[1,:])
+        #print("angle", np.rad2deg(angle))
        
         if v0==0 and a0==0:
             angle=np.zeros(angle.shape)
         self.R = np.array([[np.cos(angle), -np.sin(angle)],[np.sin(angle), np.cos(angle)]])
-        self.t = self.path - x0.reshape(2,1)
+        self.t = self.path - np.array([48,40]).reshape(2,1)# - x0.reshape(2,1)
         if v0==0 and a0==0:
             self.t = np.zeros(self.t.shape)
 		
@@ -336,7 +350,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.308#0.305  # Known Zoe wheel radius in meters.
+            radius = 0.306#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 

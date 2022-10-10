@@ -67,11 +67,11 @@ def getRoadBorders(nuscMap, worldRef, patchSize=200, layer_names=['drivable_area
         
         return edges
     
-def getLayer(nuscMap, worldRef, patchSize=200, layer_names=['drivable_area'],blur_area=(3,3),threshold1=0.5, threshold2=0.7):
+def getLayer(nuscMap, worldRef, patchSize=200, layer_names=['drivable_area'],blur_area=(3,3),threshold1=0.5, threshold2=0.7, res_factor=1):
         patch_angle = 0
         patch_size = patchSize
         patch_box = (worldRef[0], worldRef[1], patch_size, patch_size)
-        canvas_size = (patch_size, patch_size)
+        canvas_size = (patch_size*res_factor, patch_size*res_factor)
         map_mask = nuscMap.get_map_mask(patch_box, patch_angle, layer_names, canvas_size)
         mask = map_mask[0]
         
@@ -86,9 +86,9 @@ def getCombinedMap_old(nuscMap, worldRef, patchSize=200, smooth=True):
 
 
 
-def getCombinedMap(nuscMap, worldRef, patchSize=200, smooth=True):
-    image1 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['drivable_area'])
-    image2 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['walkway'])
+def getCombinedMap(nuscMap, worldRef, patchSize=200, smooth=True, res_factor=1):
+    image1 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['drivable_area'],res_factor=res_factor)
+    image2 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['walkway'],res_factor=res_factor)
     edges1 = image1 - scipy.ndimage.morphology.binary_dilation(image1)
     edges2 = image2 - scipy.ndimage.morphology.binary_dilation(image2)
     return edges1 | edges2

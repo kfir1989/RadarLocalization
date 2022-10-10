@@ -28,18 +28,21 @@ def associatePolynomAndPrior(res, priors):
     return ass_list
 
 def ComputeCoeffErrors(res, prior, ipolynom):
-    #print(res[-1][ipolynom]["f"],prior)
-    a0_err = np.zeros([len(res), 3])
-    a1_err = np.zeros([len(res), 3])
-    a2_err = np.zeros([len(res), 3])
+    a0_err = np.zeros(len(res))
+    a1_err = np.zeros(len(res))
+    a2_err = np.zeros(len(res))
     for iframe,frame in enumerate(res):
-        a0_err[iframe,0] = abs(frame[ipolynom]["f"].c[2] - prior["c"][0])
-        a1_err[iframe,1] = abs(frame[ipolynom]["f"].c[1] - prior["c"][1])
-        a2_err[iframe,2] = abs(frame[ipolynom]["f"].c[0] - prior["c"][2])
+        a0_err[iframe] = frame[ipolynom]["f"].c[2] - prior["c"][0]
+        a1_err[iframe] = frame[ipolynom]["f"].c[1] - prior["c"][1]
+        a2_err[iframe] = frame[ipolynom]["f"].c[0] - prior["c"][2]
         
-    a0_mean_err = np.mean(a0_err)
-    a1_mean_err = np.mean(a1_err)
-    a2_mean_err = np.mean(a2_err)
+    return a0_err, a1_err, a2_err
+        
+def ComputeCoeffMeanErrors(res, prior, ipolynom):
+    a0_err, a1_err, a2_err = ComputeCoeffErrors(res, prior, ipolynom)
+    a0_mean_err = np.mean(np.abs(a0_err))
+    a1_mean_err = np.mean(np.abs(a1_err))
+    a2_mean_err = np.mean(np.abs(a2_err))
     print("==================================================================================")
     print("==================================================================================")
     print(f"ComputeCoeffErrors: mean err for prior {prior} = ({a0_mean_err},{a1_mean_err},{a2_mean_err})")
@@ -56,8 +59,11 @@ def ComputePolynomDistance(res, prior, ipolynom):
         xmin = max(prior["xmin"],frame[ipolynom]["x_start"])
         xmax = min(prior["xmax"],frame[ipolynom]["x_end"])
         dist[iframe] = innerProductPolynoms(f1,f2,xmin,xmax)
-        #print("f1",f1,"f2",f2,"xmin",xmin,"xmax",xmax,"dist[iframe]",dist[iframe])
         
+    return dist
+        
+def ComputePolynomMeanDistance(res, prior, ipolynom):
+    dist = ComputePolynomDistance(res, prior, ipolynom)
     dist_mean_err = np.mean(dist)
     dist_max_err = np.max(dist)
     print("==================================================================================")
