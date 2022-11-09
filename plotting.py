@@ -884,7 +884,7 @@ def generateGraphAlongTrackErrorTurning(data, frames, ax, nusc_map, xlimits=[], 
     
     return ax
 
-def drawPathOnMap(first, time, first_pos, patch_size, t, gt_pos, ego_path, polynoms, nusc_map, ax, xlimits=[], ylimits=[]):
+def drawPathOnMap(first, time, first_pos, patch_size, t, gt_pos, ego_path, polynoms, nusc_map, ax, time_ticks_flag=True, xlimits=[], ylimits=[]):
     #Polynoms and GT on map
     if first:
         edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
@@ -906,7 +906,7 @@ def drawPathOnMap(first, time, first_pos, patch_size, t, gt_pos, ego_path, polyn
 
     ax.scatter(gt_pos[0]-first_pos[0]+patch_size*0.5,gt_pos[1]-first_pos[1]+patch_size*0.5,s=2,color="green",label="GT")
     
-    if not first and time % 10 == 0:
+    if not first and time % 10 == 0 and time_ticks_flag:
         gt_pos_on_map = [gt_pos[0]-first_pos[0]+patch_size*0.5, gt_pos[1]-first_pos[1]+patch_size*0.5]
         it = np.argmin(np.linalg.norm(ego_path - np.array(gt_pos[0:2]),axis=1),axis=0)
         ego_diff = ego_path[it]-ego_path[it-10]
@@ -922,6 +922,129 @@ def drawPathOnMap(first, time, first_pos, patch_size, t, gt_pos, ego_path, polyn
         ax.annotate( f"{int(time)}", gt_pos_on_map, textcoords="offset points",xytext=xytext,ha="center", arrowprops=dict(facecolor='black', shrink=0.05, width=10), fontsize=30) 
 
     return ax
+
+def generatePolynomsOnMapGraph(data, frames, fig, ax, nusc_map, dirname, xlimits=[], ylimits=[]):
+    N = len(frames)
+    timestamp_arr = np.linspace(0, N / 12.5, N + 1)[0:-1]
+    
+
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        
+        x_min = np.min(ego_path[:,0])
+        x_max = np.max(ego_path[:,0])
+        x_mean = 0.5*(x_min+x_max)
+        y_min = np.min(ego_path[:,1])
+        y_max = np.max(ego_path[:,1])
+        y_mean = 0.5*(y_min+y_max)
+        patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+        first_pos = [x_mean, y_mean]
+        ax = drawPathOnMap(t==frames[0], timestamp_arr[idx], first_pos, patch_size, t, gt_pos, ego_path, polynoms, nusc_map, ax, time_ticks_flag=False, xlimits=xlimits, ylimits=ylimits)
+        
+        fig.savefig(os.path.join(dirname, f'track_{idx}.png'))
+    
+    return ax
+
+def generatePositionCovarianceGraph(data, frames, fig, ax, nusc_map, dirname, xlimits=[], ylimits=[]):
+    
+    N = len(frames)
+    gt_track_pos_arr = np.zeros((N,2))
+    pf_track_pos_arr = np.zeros((N,2))
+    imu_track_pos_arr = np.zeros((N,2))
+    
+    x = np.arange(0,10)
+    y = np.arange(0,10)
+    pf_line, = ax.plot(x,y,color="blue",alpha=1,label="PF")
+    gt_line, = ax.plot(x,y,color="green",alpha=1,label="GT")
+    imu_line, = ax.plot(x,y,color="red",alpha=1,label="IMU")
+    ax.legend(loc="upper right", prop={'size': 26})
+    
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        gt_heading = np.deg2rad(video_data['heading'])
+        pf_best_pos = mm_results['pf_best_pos']
+        pf_best_theta = mm_results['pf_best_theta']
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        pf_mean_theta = mm_results['pf_mean_theta']
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        all_particles = mm_results['all_particles']
+        cost_true = mm_results['cost_true']
+        cost_mean = mm_results['cost_mean']
+        cost_dyn_true = mm_results['cost_dyn_true']
+        cost_dyn_mean = mm_results['cost_dyn_mean']
+        pf_cov = mm_results['covariance']
+        
+        gt_track_pos_arr[idx, :] = gt_pos[0:2]
+        pf_track_pos_arr[idx, :] = pf_mean_pos[0:2]
+        imu_track_pos_arr[idx, :] = imu_pos[0:2]
+        
+        x_min = np.min(ego_path[:,0])
+        x_max = np.max(ego_path[:,0])
+        x_mean = 0.5*(x_min+x_max)
+        y_min = np.min(ego_path[:,1])
+        y_max = np.max(ego_path[:,1])
+        y_mean = 0.5*(y_min+y_max)
+        patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+
+        if idx == 0:
+            first_pos = [x_mean, y_mean]
+            patch_size = patch_size
+            #edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
+            res_factor=10
+            edges = getLayer(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size,res_factor=res_factor)
+            print("edges.shape", edges.shape)
+            edges[edges==0] = 255
+            edges[edges==1] = 200
+
+            ax.imshow(edges, origin='lower', cmap='gray', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
+            ax.grid(False)
+
+        res_factor = 1
+        x_map_offset = -first_pos[0]+patch_size*0.5
+        y_map_offset = -first_pos[1]+patch_size*0.5
+        pf_line.set_xdata(res_factor*(x_map_offset+pf_track_pos_arr[:idx+1, 0]))
+        pf_line.set_ydata(res_factor*(y_map_offset+pf_track_pos_arr[:idx+1, 1]))
+        gt_line.set_xdata(res_factor*(x_map_offset+gt_track_pos_arr[:idx+1, 0]))
+        gt_line.set_ydata(res_factor*(y_map_offset+gt_track_pos_arr[:idx+1, 1]))
+        imu_line.set_xdata(res_factor*(x_map_offset+imu_track_pos_arr[:idx+1, 0]))
+        imu_line.set_ydata(res_factor*(y_map_offset+imu_track_pos_arr[:idx+1, 1]))
+        ax = confidence_ellipse(res_factor*(pf_mean_pos[0]+x_map_offset), res_factor*(pf_mean_pos[1]+y_map_offset), pf_cov, ax, edgecolor='blue')
+        
+        x_lim_offset = 1 * (5 + max(abs(imu_pos[0]-pf_mean_pos[0]), max(abs(gt_pos[0]-pf_mean_pos[0]), np.linalg.norm(pf_cov))))
+        y_lim_offset = 1 * (5 + max(abs(imu_pos[1]-pf_mean_pos[1]), max(abs(gt_pos[1]-pf_mean_pos[1]), np.linalg.norm(pf_cov))))
+        ax.set_xlim([res_factor * (pf_mean_pos[0]+x_map_offset - x_lim_offset), res_factor * (pf_mean_pos[0]+x_map_offset+x_lim_offset)])
+        ax.set_ylim([res_factor*(pf_mean_pos[1]+y_map_offset - y_lim_offset), res_factor*(pf_mean_pos[1]+y_map_offset + y_lim_offset)])
+            
+        fig.savefig(os.path.join(dirname, f'track_{idx}.png'))
+        ax.patches.pop()
+        #ax.clear()
+        
+    return ax
+
+def generateVideo(name, dirname, fps=1):
+    os.system("mkdir -p " + dirname)
+    filenames = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
+    filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+    print("filenames", filenames)
+
+    frame = cv2.imread(os.path.join(dirname, filenames[0]))
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(name, fourcc=cv2.VideoWriter_fourcc('M','J','P','G'), frameSize=(width,height),fps=fps)
+
+    for filename in filenames:
+        print("writing", filename)
+        video.write(cv2.imread(os.path.join(dirname, filename)))
+
+    cv2.destroyAllWindows()
+    video.release()
     
 
 """
