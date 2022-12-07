@@ -443,6 +443,8 @@ def generateGraphCrossAlong(data, frames, ax):
     gt_track_pos_arr = np.zeros((N,2))
     pf_track_pos_arr = np.zeros((N,2))
     imu_track_pos_arr = np.zeros((N,2))
+    sigma_cross_arr = np.zeros(N)
+    sigma_along_arr = np.zeros(N)
     
     for idx, t in enumerate(frames):
         video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
@@ -452,6 +454,8 @@ def generateGraphCrossAlong(data, frames, ax):
         imu_pos = np.array(video_data["pos_imu"][0:2])
         ego_path = video_data["ego_path"][:,0:2]
         ego_trns = video_data["ego_trns"]
+        pf_cov = np.array(mm_results['covariance'])
+        heading = gt_pos[2]
         
         gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
         pf_track_errors = pf_track_pos - gt_track_pos
@@ -464,6 +468,9 @@ def generateGraphCrossAlong(data, frames, ax):
         gt_track_pos_arr[idx, :] = gt_track_pos
         pf_track_pos_arr[idx, :] = pf_track_pos
         imu_track_pos_arr[idx, :] = imu_track_pos
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        sigma_cross_arr[idx] = np.dot(R, pf_cov)[1,1]
+        sigma_along_arr[idx] = np.dot(R, pf_cov)[0,0]
     
     #Cross-Track Position(t)
     ax[0,0].scatter(timestamp_arr, gt_track_pos_arr[:,0],color='green',alpha=0.6,label='GT')
@@ -474,6 +481,8 @@ def generateGraphCrossAlong(data, frames, ax):
     ax[1,0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[1,0].plot(timestamp_arr, pf_cross_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[1,0].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[1,0].plot(timestamp_arr, -1*np.sqrt(sigma_cross_arr) * 1.5, color='orange', linewidth=3)
+    ax[1,0].plot(timestamp_arr, np.sqrt(sigma_cross_arr) * 1.5, color='orange', label='std Lat', linewidth=3)
 
     #Along-Track Position(t)
     ax[0,1].scatter(timestamp_arr, gt_track_pos_arr[:,1],color='green',alpha=0.6,label='GT')
@@ -484,6 +493,8 @@ def generateGraphCrossAlong(data, frames, ax):
     ax[1,1].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[1,1].plot(timestamp_arr, pf_along_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[1,1].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[1,1].plot(timestamp_arr, -1*np.sqrt(sigma_along_arr) * 2, color='orange', label='std Lon', linewidth=3)
+    ax[1,1].plot(timestamp_arr, np.sqrt(sigma_along_arr) * 2, color='orange', linewidth=3)
     
     return ax
 
@@ -497,6 +508,8 @@ def generateGraphXY(data, frames, ax):
     gt_pos_arr = np.zeros((N,2))
     pf_pos_arr = np.zeros((N,2))
     imu_pos_arr = np.zeros((N,2))
+    sigma_x_arr = np.zeros(N)
+    sigma_y_arr = np.zeros(N)
     
     for idx, t in enumerate(frames):
         video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
@@ -506,6 +519,7 @@ def generateGraphXY(data, frames, ax):
         imu_pos = np.array(video_data["pos_imu"][0:2])
         ego_path = video_data["ego_path"][:,0:2]
         ego_trns = video_data["ego_trns"]
+        pf_cov = np.array(mm_results['covariance'])
         
         pf_errors = gt_pos - pf_mean_pos
         imu_errors = gt_pos - imu_pos
@@ -517,6 +531,8 @@ def generateGraphXY(data, frames, ax):
         gt_pos_arr[idx, :] = gt_pos
         pf_pos_arr[idx, :] = pf_mean_pos
         imu_pos_arr[idx, :] = imu_pos
+        sigma_x_arr[idx] = pf_cov[0,0]
+        sigma_y_arr[idx] = pf_cov[1,1]
     
     #X(t)
     ax[0,0].scatter(timestamp_arr, gt_pos_arr[:,0],color='green',alpha=0.6,label='GT')
@@ -527,6 +543,8 @@ def generateGraphXY(data, frames, ax):
     ax[1,0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[1,0].plot(timestamp_arr, pf_x_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[1,0].plot(timestamp_arr, imu_x_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[1,0].plot(timestamp_arr, -1*np.sqrt(sigma_x_arr) * 1.5, color='orange', linewidth=3)
+    ax[1,0].plot(timestamp_arr, np.sqrt(sigma_x_arr) * 1.5, color='orange', label='std x', linewidth=3)
 
     #Along-Track Position(t)
     ax[0,1].scatter(timestamp_arr, gt_pos_arr[:,1],color='green',alpha=0.6,label='GT')
@@ -537,6 +555,8 @@ def generateGraphXY(data, frames, ax):
     ax[1,1].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[1,1].plot(timestamp_arr, pf_y_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[1,1].plot(timestamp_arr, imu_y_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[1,1].plot(timestamp_arr, -1*np.sqrt(sigma_y_arr) * 2, color='orange', label='std y', linewidth=3)
+    ax[1,1].plot(timestamp_arr, np.sqrt(sigma_y_arr) * 2, color='orange', linewidth=3)
     
     return ax
 
@@ -552,6 +572,8 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
     imu_track_pos_arr = np.zeros((N,2))
     n_polynoms_arr = np.zeros(N)
     n_dyn_tracks_arr = np.zeros(N)
+    cov_cross_arr = np.zeros(N)
+    cov_along_arr = np.zeros(N)
     
     for idx, t in enumerate(frames):
         video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
@@ -561,6 +583,8 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
         imu_pos = np.array(video_data["pos_imu"][0:2])
         ego_path = video_data["ego_path"][:,0:2]
         ego_trns = video_data["ego_trns"]
+        pf_cov = np.array(mm_results['covariance'])
+        heading = gt_pos[2]
         
         gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
         pf_track_errors = pf_track_pos - gt_track_pos
@@ -573,6 +597,9 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
         gt_track_pos_arr[idx, :] = gt_track_pos
         pf_track_pos_arr[idx, :] = pf_track_pos
         imu_track_pos_arr[idx, :] = imu_track_pos
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        cov_cross_arr[idx] = np.dot(R,pf_cov)[1,1]
+        cov_along_arr[idx] = np.dot(R,pf_cov)[0,0]
         n_polynoms_arr[idx] = len(polynoms)
         for trk in dynamic_tracks:
             if isVehicle(trk):
@@ -582,6 +609,8 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
     ax[0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[0].plot(timestamp_arr, pf_cross_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[0].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[0].plot(timestamp_arr, -1*np.sqrt(cov_cross_arr) * 2, color='orange', label='std Lat', linewidth=3)
+    ax[0].plot(timestamp_arr, np.sqrt(cov_cross_arr) * 2, color='orange', linewidth=3)
     
     #sttaic tracks
     ax[1].plot(timestamp_arr, n_polynoms_arr,label='static tracks', linewidth=3)
@@ -603,6 +632,8 @@ def generateGraphAlongNumPolynoms(data, frames, ax):
     pf_track_pos_arr = np.zeros((N,2))
     imu_track_pos_arr = np.zeros((N,2))
     n_lateral_polynoms_arr = np.zeros(N)
+    cov_cross_arr = np.zeros(N)
+    cov_along_arr = np.zeros(N)
     
     for idx, t in enumerate(frames):
         video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
@@ -612,6 +643,8 @@ def generateGraphAlongNumPolynoms(data, frames, ax):
         imu_pos = np.array(video_data["pos_imu"][0:2])
         ego_path = video_data["ego_path"][:,0:2]
         ego_trns = video_data["ego_trns"]
+        pf_cov = np.array(mm_results['covariance'])
+        heading = gt_pos[2]
         
         gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
         pf_track_errors = pf_track_pos - gt_track_pos
@@ -624,6 +657,9 @@ def generateGraphAlongNumPolynoms(data, frames, ax):
         gt_track_pos_arr[idx, :] = gt_track_pos
         pf_track_pos_arr[idx, :] = pf_track_pos
         imu_track_pos_arr[idx, :] = imu_track_pos
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        cov_cross_arr[idx] = np.dot(R,pf_cov)[1,1]
+        cov_along_arr[idx] = np.dot(R,pf_cov)[0,0]
         
         for polynom in polynoms:
             xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
@@ -636,6 +672,8 @@ def generateGraphAlongNumPolynoms(data, frames, ax):
     ax[0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[0].plot(timestamp_arr, pf_along_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[0].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[0].plot(timestamp_arr, -1*np.sqrt(cov_along_arr) * 4, color='orange', label='std Lon', linewidth=3)
+    ax[0].plot(timestamp_arr, np.sqrt(cov_along_arr) * 4, color='orange', linewidth=3)
     
     #static tracks
     ax[1].plot(timestamp_arr, n_lateral_polynoms_arr,label='static tracks', linewidth=3)
@@ -980,7 +1018,7 @@ def generatePositionCovarianceGraph(data, frames, fig, ax, nusc_map, dirname, xl
         cost_mean = mm_results['cost_mean']
         cost_dyn_true = mm_results['cost_dyn_true']
         cost_dyn_mean = mm_results['cost_dyn_mean']
-        pf_cov = mm_results['covariance']
+        pf_cov = mm_results['covariance'] * 2
         
         gt_track_pos_arr[idx, :] = gt_pos[0:2]
         pf_track_pos_arr[idx, :] = pf_mean_pos[0:2]
