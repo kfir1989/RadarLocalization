@@ -7,18 +7,20 @@ import detector
 import scipy
 from sklearn.cluster import DBSCAN
 from scipy.spatial.distance import cdist
+
+#Parameters for simulation: 
     
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=2,deltaE=2)
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=4,deltaE=4)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
-        self.eta = 30
+        self.eta = 40
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 4#4
+        self.pnt_max_non_update_iterations = 3#4
         self.ext_max_non_update_iterations = 5#5
         self.max_decline_factor = 100
         self.system_rotated_flag = False
@@ -35,14 +37,16 @@ class StaticTracker:
         #prediction
         for ext_track in self.ext_object_list:
             ext_track.predict()
+            ext_track.save()
         for pnt_track in self.pnt_object_list:
             pnt_track.predict()
+            pnt_track.save()
         
         Ge, Gp = self.p2t(z)
         z, dz = self.trackUpdate(z, dz, Ge, Gp)
         self.trackInitPnt(z,dz)
             
-        if self.frame_idx > 4:
+        if self.frame_idx > 3:
             self.generateExtObject(prior)
         self.trackMaintenance()     
         
@@ -71,6 +75,7 @@ class StaticTracker:
                 innov_cov = pnt_track.getCovarianceMatrix()
                 Gp[idx_z,idx_track] = self.pnt_data_associator.calcLikelihood(z, x_pred, innov_cov)
         
+        print(f"Ge.shape = {Ge.shape} There are {np.count_nonzero(Ge, axis=0)} non zero elements in Ge")
         return Ge, Gp
     
     def trackUpdate(self, z, dz, Ge, Gp):
@@ -79,32 +84,37 @@ class StaticTracker:
             i_meas, lp, le, i_trk_p, i_trk_e = self.getBestAssociation(Ge, Gp)
             if(le == 0 and lp == 0):
                 break
-            self.zeroOutAssociation(Gp, i_meas, i_trk_p) # Clear from point association matrix
-            Ge[i_meas, :] = 0 # Clear from extended association matrix, only measurement!
+            if lp > 0:
+                self.zeroOutAssociation(Gp, i_meas, i_trk_p) # Clear from point association matrix
+            if le > 0:
+                Ge[i_meas, :] = 0 # Clear from extended association matrix, only measurement!
             x, y = z[i_meas]
-            cov = np.diag([dz[i_meas][0,0], dz[i_meas][1,1]])
-            #cov = dz[i_meas][:,:]
+            cov = dz[i_meas]
             assigned_meas_list.append(i_meas)
             ratio = np.sqrt(lp)/le
             #print("lp",lp,"le",le)
-            if ratio > self.eta:
+            if lp > 0.01 and (le == 0  or ratio > self.eta):
                 i_trk = i_trk_p
-                #print("Updating point track = ", i_trk)
                 self.pnt_object_list[i_trk].update(z=np.array([x,y]).T,cov=cov, current_frame_idx=self.frame_idx)
+                self.pnt_object_list[i_trk].save()
                 self.debug["mupoi"].append({"measurements": np.array([x,y]).T, "points":self.pnt_object_list[i_trk].getStateVector()})
-            else:
+            if le > 0:
                 i_trk = i_trk_e
                 trk = self.ext_object_list[i_trk]
+                if(i_trk == 1):
+                    P_debug = trk.getStateCovarianceMatrix()
+                    print(f"Meas {z[i_meas]} is updating trk2 with state vector = {trk.getStateVector()} and covariance = {np.sqrt(P_debug[0][0])} {np.sqrt(P_debug[1][1])} {np.sqrt(P_debug[2][2])}")
                 x = x if trk.getFxFlag() else z[i_meas][1]
                 y = y if trk.getFxFlag() else z[i_meas][0]
-                #cov = cov if trk.getFxFlag() else cov.flip()
                 trk.counter_update += 1
                 Hse = np.array([1 if x < trk.getStateVector()[3] else 0, 1 if x > trk.getStateVector()[4] else 0])
                 H = np.array([[0, 0, 0, Hse[0], Hse[1]],[1, x, x**2, 0, 0]])
+                cov = cov if trk.getFxFlag() else np.flip(cov)
                 R = cov
-                #print("R",R)
-                print("Updating extended object track = ", i_trk)
-                self.ext_object_list[i_trk].update(np.array([x,y]).T, current_frame_idx=self.frame_idx, H=H, R=R)
+                #print(f"Updating extended object track = {i_trk}")
+                self.ext_object_list[i_trk].update(np.array([x,y]).T, current_frame_idx=self.frame_idx, H=H, cov=R)
+                self.ext_object_list[i_trk].save()
+                #print(f"Updating extended object track = {i_trk} state vector after is = {self.ext_object_list[i_trk].getStateVector()}")
                 self.debug["mupol"].append({"measurements": np.array([x,y]).T, "polynom":self.ext_object_list[i_trk].getStateVector(), "id":i_trk, "fxFlag": self.ext_object_list[i_trk].getFxFlag()})
                 #print("P after update", self.ext_object_list[i_trk].getStateCovarianceMatrix())
                 
@@ -183,7 +193,7 @@ class StaticTracker:
                     covP[2,2] = cov[0,0]
                     covP[3,3] = 5
                     covP[4,4] = 5
-                    covP = covP * 10
+                    covP = covP * 20
                     f = np.poly1d(fit)
                     if not fx_flag:
                         print("Opening flipped polynom!!!")
@@ -558,6 +568,11 @@ class StaticTracker:
         if Ge.size > 0:
             if lp > 0:
                 i_trk_e = np.argmax(Ge[i_meas,:])
+                le = Ge[i_meas,i_trk_e]
+            else:
+                ind = np.unravel_index(np.argmax(Ge, axis=None), Ge.shape)
+                i_meas = ind[0]
+                i_trk_e = ind[1]
                 le = Ge[i_meas,i_trk_e]
         
         return i_meas,lp, le, i_trk_p, i_trk_e

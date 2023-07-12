@@ -339,7 +339,7 @@ class PolynomsOnMapGraph():
     def __init__(self):
         self.counter = 0
         
-    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, xlimits=[], ylimits=[]):
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[]):
         #Polynoms and GT on map
         if self.counter == 0:
             x_min = np.min(ego_path[:,0])
@@ -363,11 +363,15 @@ class PolynomsOnMapGraph():
             ax.set_xlim(xlim)
             ax.set_ylim(ylim)
 
+        if not colors:
+            colors = ["magenta"] * len(polynoms)
+        if not labels:
+            labels = ["polynoms"] * len(polynoms)
         for c,polynom in enumerate(polynoms):
             xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
             y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
-            ax.plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color="magenta",linewidth=1,label="polynoms") 
+            ax.plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color=colors[c],linewidth=1,label=labels[c]) 
         
         ax.scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=2,color="green",label="GT")
             

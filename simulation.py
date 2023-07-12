@@ -25,7 +25,7 @@ class DynamicSimulation():
         for t in range(0,N):
             print(f"frame {t}")
             zw, covw, prior, video_data = self.dataset.getData(t)
-            #print("prior", prior)
+            #print(f"covw = {covw}")
             points, polynoms = self.model.run(zw,covw,prior)
             #prior = [{"c": (27.5,-5,0.3), "xmin": 5, "xmax": 16,"fx": True}]
             
