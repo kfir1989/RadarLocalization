@@ -3,6 +3,9 @@ import cv2
 import numpy as np
 from scipy.spatial.distance import cdist
 import scipy.ndimage.morphology
+import nuscenes.map_expansion.arcline_path_utils as path_utils
+from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage.filters import convolve
 
 def draw_line(mat, x0, y0, x1, y1, fill=255, inplace=False):
     if not (0 <= x0 < mat.shape[0] and 0 <= x1 < mat.shape[0] and
@@ -92,3 +95,61 @@ def getCombinedMap(nuscMap, worldRef, patchSize=200, smooth=True, res_factor=1):
     edges1 = image1 - scipy.ndimage.morphology.binary_dilation(image1)
     edges2 = image2 - scipy.ndimage.morphology.binary_dilation(image2)
     return edges1 | edges2
+
+def drawLanes(nusc_map, ego_trns, sx=0, sy=0):
+    lane_ids = nusc_map.get_records_in_radius(ego_trns[0], ego_trns[1], 80, ['lane', 'lane_connector'])
+    nearby_lanes = lane_ids['lane'] + lane_ids['lane_connector']
+    lanes_poses = np.array([])
+    for lane_token in nearby_lanes:
+        lane_record = nusc_map.get_arcline_path(lane_token)
+        poses = path_utils.discretize_lane(lane_record, resolution_meters=0.5)
+        poses = np.array(poses)
+        
+        poses[:, 0] += sx
+        poses[:, 1] += sy
+        lanes_poses = np.vstack([lanes_poses, poses]) if lanes_poses.size else poses
+            
+    return lanes_poses
+
+def scatter_to_image(scatter, res_factor=5, center = [600,600], patch_size=200):
+    minX = np.min(scatter[:, 0])  # Maximum x-coordinate
+    maxX = np.max(scatter[:, 0])  # Maximum x-coordinate
+    minY = np.min(scatter[:, 1])  # Maximum y-coordinate
+    maxY = np.max(scatter[:, 1])  # Maximum y-coordinate
+
+    matrix_width = matrix_height = int(patch_size * res_factor)
+    image = np.zeros((matrix_height, matrix_width), dtype=int)  # Initialize output matrix
+    for point in scatter:
+        x, y = point[0], point[1]
+        mat_y = int(matrix_height/2) + int((y-center[1]) * res_factor)
+        mat_x = int(matrix_width/2) + int((x-center[0]) * res_factor)
+        if(mat_x < 0 or mat_x >= matrix_width or mat_y < 0 or mat_y >= matrix_height):
+            continue
+            
+        image[mat_y,mat_x] = 1  # Set corresponding element to 1
+
+    return image
+
+def build_probability_map(binary_map, sigma=1, N=1., kernel=None):
+    # Create an empty probability map with the same size as the binary map
+    probability_map = np.zeros_like(binary_map, dtype=float)
+    
+    # Set the highest probability (1) for pixels with a value of 1 in the binary map
+    probability_map[binary_map == 255] = 1.0
+    
+    # Define the convolution kernel
+    if kernel is None:
+        kernel = np.array([[1.0, 1.0, 1.0],
+                           [1.0, 0.0, 1.0],
+                           [1.0, 1.0, 1.0]])
+    
+    # Apply convolution on the binary map to preserve the central 1s
+    convolved_map = convolve(binary_map, kernel, mode='constant', cval=0.0)
+    
+    # Apply Gaussian filter to spread the probabilities to neighboring pixels
+    filtered_map = gaussian_filter(convolved_map, sigma=sigma)
+    
+    # Normalize the probability map to range between 0 and 1
+    probability_map = filtered_map / np.max(filtered_map)
+    
+    return probability_map
