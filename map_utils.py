@@ -135,21 +135,27 @@ def build_probability_map(binary_map, sigma=1, N=1., kernel=None):
     probability_map = np.zeros_like(binary_map, dtype=float)
     
     # Set the highest probability (1) for pixels with a value of 1 in the binary map
-    probability_map[binary_map == 255] = 1.0
+    probability_map[np.logical_or(binary_map == 255, binary_map == 1)] = 1.0
     
     # Define the convolution kernel
     if kernel is None:
-        kernel = np.array([[1.0, 1.0, 1.0],
-                           [1.0, 0.0, 1.0],
-                           [1.0, 1.0, 1.0]])
+        kernel = np.array([[0.5, 0.5, 0.5],
+                           [0.5, 1.0, 0.5],
+                           [0.5, 0.5, 0.5]])
     
     # Apply convolution on the binary map to preserve the central 1s
-    convolved_map = convolve(binary_map, kernel, mode='constant', cval=0.0)
+    #convolved_map = convolve(binary_map, kernel, mode='constant', cval=0.0)
     
     # Apply Gaussian filter to spread the probabilities to neighboring pixels
-    filtered_map = gaussian_filter(convolved_map, sigma=sigma)
+    filtered_map = gaussian_filter(binary_map, sigma=sigma)
     
     # Normalize the probability map to range between 0 and 1
-    probability_map = filtered_map / np.max(filtered_map)
+    norm_factor=scipy.ndimage.maximum_filter(filtered_map,size=[int(sigma*1.5),int(sigma*1.5)])
+    probability_map = filtered_map / norm_factor
+    probability_map = np.nan_to_num(probability_map, nan=0)
+    probability_map[binary_map > 0] = 1.0
+    
+    c1,c2 = 0.99,0.01
+    probability_map = c1 * probability_map + c2# add uniform distribution
     
     return probability_map

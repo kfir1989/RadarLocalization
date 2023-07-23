@@ -339,7 +339,7 @@ class PolynomsOnMapGraph():
     def __init__(self):
         self.counter = 0
         
-    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[]):
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[], res_factor=1.):
         #Polynoms and GT on map
         if self.counter == 0:
             x_min = np.min(ego_path[:,0])
@@ -352,7 +352,7 @@ class PolynomsOnMapGraph():
 
             self.first_pos = [x_mean, y_mean]
             self.patch_size = patch_size
-            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size)
+            edges = getCombinedMap(nuscMap=nusc_map, worldRef=self.first_pos, patchSize=self.patch_size, res_factor=res_factor)
 
             ax.imshow(edges, origin='lower')
             ax.grid(False)
@@ -371,11 +371,12 @@ class PolynomsOnMapGraph():
             xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
             x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
             y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
-            ax.plot(x_plot-self.first_pos[0]+self.patch_size*0.5,y_plot-self.first_pos[1]+self.patch_size*0.5,color=colors[c],linewidth=1,label=labels[c]) 
+            #print(f"y_plot = {y_plot} self.first_pos[0] = {self.first_pos[0]} self.patch_size = {self.patch_size} (y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor = {(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor}")
+            ax.plot((x_plot-self.first_pos[0]+self.patch_size*0.5)*res_factor,(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor,color=colors[c],linewidth=1,label=labels[c]) 
         
-        ax.scatter(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5,gt_pos[1]-self.first_pos[1]+self.patch_size*0.5,s=2,color="green",label="GT")
+        ax.scatter(res_factor*(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5),res_factor*(gt_pos[1]-self.first_pos[1]+self.patch_size*0.5),s=2,color="green",label="GT")
             
-        
+        self.counter += 1
         return ax
     
     

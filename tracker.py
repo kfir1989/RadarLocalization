@@ -16,12 +16,12 @@ class StaticTracker:
         self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=4,deltaE=4)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
-        self.eta = 40
+        self.eta = 70
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 3#4
-        self.ext_max_non_update_iterations = 5#5
+        self.pnt_max_non_update_iterations = 5#4
+        self.ext_max_non_update_iterations = 7#5
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -65,8 +65,10 @@ class StaticTracker:
                 y_pred = x_pred[0] + x_pred[1]*zx + x_pred[2]*zx**2
                 P_pred = ext_track.getPredictedCovarianceMatrix()
                 Ha = np.array([1, zx, zx**2])
-                S_pred = np.dot(np.dot(Ha, P_pred[0:3,0:3]), Ha.T)
+                S_pred = min(1., np.abs(np.dot(np.dot(Ha, P_pred[0:3,0:3]), Ha.T)))
                 Ge[idx_z,idx_track] = self.ext_data_associator.calcLikelihood(zx, zy, y_pred, S_pred, x)
+                if np.isnan(Ge[idx_z,idx_track]):
+                    print(f"nan! S_pred = {S_pred} x_pred = {x_pred} zx = {zx} zy = {zy} y_pred = {y_pred}")
                     
             for idx_track, pnt_track in enumerate(self.pnt_object_list):
                 x = pnt_track.getStateVector()
@@ -75,7 +77,9 @@ class StaticTracker:
                 innov_cov = pnt_track.getCovarianceMatrix()
                 Gp[idx_z,idx_track] = self.pnt_data_associator.calcLikelihood(z, x_pred, innov_cov)
         
-        print(f"Ge.shape = {Ge.shape} There are {np.count_nonzero(Ge, axis=0)} non zero elements in Ge")
+        #print(f"Ge.shape = {Ge.shape} There are {np.count_nonzero(Ge, axis=0)} non zero elements in Ge")
+        
+        Ge = np.nan_to_num(Ge, nan=0)
         return Ge, Gp
     
     def trackUpdate(self, z, dz, Ge, Gp):
@@ -93,17 +97,14 @@ class StaticTracker:
             assigned_meas_list.append(i_meas)
             ratio = np.sqrt(lp)/le
             #print("lp",lp,"le",le)
-            if lp > 0.01 and (le == 0  or ratio > self.eta):
+            if lp > 0.1 and (le == 0  or ratio > self.eta):
                 i_trk = i_trk_p
                 self.pnt_object_list[i_trk].update(z=np.array([x,y]).T,cov=cov, current_frame_idx=self.frame_idx)
                 self.pnt_object_list[i_trk].save()
                 self.debug["mupoi"].append({"measurements": np.array([x,y]).T, "points":self.pnt_object_list[i_trk].getStateVector()})
-            if le > 0:
+            if le > 0.1:
                 i_trk = i_trk_e
                 trk = self.ext_object_list[i_trk]
-                if(i_trk == 1):
-                    P_debug = trk.getStateCovarianceMatrix()
-                    print(f"Meas {z[i_meas]} is updating trk2 with state vector = {trk.getStateVector()} and covariance = {np.sqrt(P_debug[0][0])} {np.sqrt(P_debug[1][1])} {np.sqrt(P_debug[2][2])}")
                 x = x if trk.getFxFlag() else z[i_meas][1]
                 y = y if trk.getFxFlag() else z[i_meas][0]
                 trk.counter_update += 1
@@ -111,9 +112,8 @@ class StaticTracker:
                 H = np.array([[0, 0, 0, Hse[0], Hse[1]],[1, x, x**2, 0, 0]])
                 cov = cov if trk.getFxFlag() else np.flip(cov)
                 R = cov
-                #print(f"Updating extended object track = {i_trk}")
+                #print(f"Updating extended object track = {i_trk} le = {le} cov = {cov} self.ext_object_list[i_trk].getStateCovarianceMatrix() = {self.ext_object_list[i_trk].getStateCovarianceMatrix()}")
                 self.ext_object_list[i_trk].update(np.array([x,y]).T, current_frame_idx=self.frame_idx, H=H, cov=R)
-                self.ext_object_list[i_trk].save()
                 #print(f"Updating extended object track = {i_trk} state vector after is = {self.ext_object_list[i_trk].getStateVector()}")
                 self.debug["mupol"].append({"measurements": np.array([x,y]).T, "polynom":self.ext_object_list[i_trk].getStateVector(), "id":i_trk, "fxFlag": self.ext_object_list[i_trk].getFxFlag()})
                 #print("P after update", self.ext_object_list[i_trk].getStateCovarianceMatrix())
@@ -193,7 +193,8 @@ class StaticTracker:
                     covP[2,2] = cov[0,0]
                     covP[3,3] = 5
                     covP[4,4] = 5
-                    covP = covP * 20
+                    #print(f"covP = {covP}")
+                    #covP = np.diag([1e-2, 1e-4, 1e-6, 5, 5])
                     f = np.poly1d(fit)
                     if not fx_flag:
                         print("Opening flipped polynom!!!")
