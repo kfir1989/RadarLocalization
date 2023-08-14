@@ -24,8 +24,8 @@ def drawLanes(ax, nusc_map, ego_trns):
         #grad = np.abs(dy / (dx + 1e-6))
         #sx = -1*np.sign(dy) * w * 1/np.sqrt(1+grad**2)
         #sy = np.sign(dx) * w * grad * 1/np.sqrt(1+grad**2)
-        poses[:, 0] += -1
-        poses[:, 1] += -1
+        #poses[:, 0] += -1
+        #poses[:, 1] += -1
             
         ax.scatter(poses[:,0], poses[:,1],color='orange',s=2)
 

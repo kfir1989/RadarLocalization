@@ -9,6 +9,7 @@ from scipy.interpolate import splrep, splev
 from utils import ExtObjectDataAssociator
 from map_utils import getRoadBorders, getCombinedMap
 from map_utils import build_probability_map, scatter_to_image, drawLanes
+import math
 
 class PF:
     def __init__(self, N):
@@ -26,7 +27,37 @@ class PF:
         self.imu_bias_factor = 0
         self.cond3_counter = 0
         self.wheel_radius_bias = 1
-        
+    
+    @staticmethod
+    def getLineIndication(pos, N=50, thr=0.005):
+        x = pos[-N:,0]
+        y = pos[-N:,1]
+
+        fit, cov = np.polyfit(x, y, 1, cov=True)
+        if abs(fit[0]) > 2:
+            fit, cov = np.polyfit(y, x, 1, cov=True)
+            
+        if np.sqrt(cov[0,0]) < thr:
+            return True
+
+        return False
+    
+    @staticmethod
+    def computeIMUAngleBias(imuPos, pfPose, N=100):
+        if imuPos.shape[0] >= N:
+            l = np.linalg.norm(imuPos[-N,:]-imuPos[0,:])
+            if l > 50 and PF.getLineIndication(imuPos, N=N):
+                fit_imu = np.polyfit(imuPos[-N:,0], imuPos[-N:,1], 1, cov=False)
+                fit_pf = np.polyfit(pfPose[-N:,0], pfPose[-N:,1], 1, cov=False)
+
+                m1 = fit_imu[0]
+                m2 = fit_pf[0]
+                theta = np.arctan((m1 - m2)/(1 + m1*m2))
+                if(abs(theta < 0.01)):
+                    return theta
+
+        return None
+    
     @staticmethod
     def getXYLimits(extTrack):
         xs = extTrack.getStateVector()[3]
@@ -38,9 +69,11 @@ class PF:
         return xs,xe,ys,ye
     
     @staticmethod
-    def world2Map(pos, worldRef, mapRef):
+    def world2Map(pos, worldRef, mapRef, mapRes=1.):
         pos[:, 0] -= worldRef[0]
+        pos[:, 0] *= mapRes
         pos[:, 1] -= worldRef[1]
+        pos[:, 1] *= mapRes
         if 0:
             dtheta = mapRef[2] - worldRef[2]
 
@@ -67,9 +100,11 @@ class PF:
         return x
 
     @staticmethod
-    def map2World(pos, worldRef, mapRef):
+    def map2World(pos, worldRef, mapRef, mapRes=1.):
         pos[0] -= mapRef[0]
+        pos[0] /= mapRes
         pos[1] -= mapRef[1]
+        pos[1] /= mapRes
         if 0:
             dtheta = worldRef[2] - mapRef[2]
             transform_matrix = np.array([[np.cos(dtheta), -np.sin(dtheta)],
@@ -123,19 +158,18 @@ class PF:
 
         return transformed_trk.T
     
-    def calcTrkWeight(self, extTrack):
-        if 0:
-            trk_age = extTrack.last_update_frame_idx - extTrack.create_frame_idx
-            trk_n_updates = extTrack.counter_update
-            alpha = 0.5
-            weight = (alpha * trk_age + (1-alpha) * trk_n_updates) * 0.01
-        else:
-            weight = 1
+    def isTranslationInINSBoundaries(self, particle):
+        t = self.ins_bounds["trns"]
+        if t > 300:
+            if particle["trns"] < 0.99 * t or particle["trns"] > 1.01 * t:
+                return False
         
-        return weight
+        return True
+                
     
-    def calcScore(self, probMap, scatter, mapRes, mapCenter):
-        im = scatter_to_image(scatter, res_factor=mapRes, center = mapCenter, patch_size=300)
+    @staticmethod
+    def calcScore(probMap, scatter, mapRes, mapCenter,patch_size=300):
+        im = scatter_to_image(scatter, res_factor=mapRes, center = mapCenter, patch_size=patch_size)
         score = im*probMap
         return score
         
@@ -158,7 +192,7 @@ class PF:
             it = eucld_dist.argmin()
             #Calc translation
             txy = boundaryPoints[it,:] - polynom_mid_point
-            if(np.linalg.norm(txy)) < 4:
+            if(np.linalg.norm(txy)) < 6:
                 #Translate polynom
                 polynom_translated = polynom + txy
                 #Compute low sigma score for translated polynom(shape)
@@ -170,7 +204,7 @@ class PF:
             #Compute low sigma score for non-translated polynom(shape)
             low_sigma_score = self.calcScore(probMap=self.static_sigma1_map, scatter=polynom_on_map, mapRes=self.map_res_factor, mapCenter=self.map_reference_point)
         
-        return np.sum(np.sum(low_sigma_score * high_sigma_score))
+        return np.sum(np.sum(0.5*low_sigma_score + 0.5*high_sigma_score))
         
     
     def getClosestPointToDrivableArea(self, pos, drivableArea):
@@ -181,26 +215,28 @@ class PF:
     def eval_polynom_map_match(self, ext_track, particle, worldRef):
         height, width = self.road_map.shape[:2]
         map_center = (width/2, height/2)
-        weight = self.calcTrkWeight(ext_track)
-        polynom = ext_track.getElements()
+        polynom = ext_track.getElementsInFOV(worldRef)
+        if not polynom.any():
+            return 0,0
+        
+        polynom_len = np.sqrt(abs(polynom[-1,0]-polynom[0,0])**2 + abs(polynom[-1,1]-polynom[0,1])**2)
         transformed_polynom = self.transformPolynom(polynom, worldRef, particle)
         #transform polynom to the particles' perspective
         world_xs,world_xe,world_ys,world_ye = transformed_polynom[0,0], transformed_polynom[-1,0], transformed_polynom[0,1], transformed_polynom[-1,1]
         #get relevant patch from map
         padding = 20
-        map_limits = self.world2Map(np.array([[world_xs,world_ys],[world_xe,world_ye]]), worldRef, map_center)
+        map_limits = self.world2Map(np.array([[world_xs,world_ys],[world_xe,world_ye]]), worldRef, map_center, mapRes=self.map_res_factor)
         map_xs,map_xe,map_ys,map_ye = max(0, int(min(map_limits[0,0], map_limits[1,0])) - padding), min(width-1, int(max(map_limits[0,0], map_limits[1,0])) + padding), max(0, int(min(map_limits[0,1], map_limits[1,1])) - padding), min(height-1, int(max(map_limits[0,1], map_limits[1,1])) + padding)
         (row,col) = np.where(self.road_map[map_ys:map_ye,map_xs:map_xe])
         #if there are any boundary points in the map
         boundary_points = None
         if row.shape[0] > 0:
-            boundary_points = self.map2World(np.array([col+map_xs, row+map_ys]).astype('float64'), worldRef, map_center)
+            boundary_points = self.map2World(np.array([col+map_xs, row+map_ys]).astype('float64'), worldRef, map_center, mapRes=self.map_res_factor)
             boundary_points = boundary_points.T
         
         score = self.computeScoreForStaticTracks(polynom=transformed_polynom, boundaryPoints=boundary_points)
-        score *= weight
            
-        return score
+        return score, polynom_len
     
     def eval_dynamic_track_map_match(self, trk, particle, worldRef, firstWorldRef, debug=False):
         cost = 0
@@ -235,6 +271,7 @@ class PF:
 
             #initial weight
             particle['weight'] = 1.0 / num_particles
+            particle["trns"] = 0
 
             #particle history aka all visited poses
             particle['history'] = []
@@ -243,9 +280,15 @@ class PF:
             particles.append(particle)
 
         self.particles = particles
-        self.ins_bounds = {"x1": 0, "x2": 0, "y1": 0, "y2": 0}
+        self.ins_bounds = {"trns": 0}
     
     def sample_motion_model(self, new_odom_xy_theta, drivableArea):
+        imu_angle_bias = 0
+        if 1 and self.imu_bias_factor == 0:
+            b = self.computeIMUAngleBias(self.imu_path[:self.counter,:], self.pf_path[:self.counter,:]) 
+            if b is not None:
+                self.imu_bias_factor = -b
+                imu_angle_bias = -b
         # compute the change in x,y,theta since our last update
         if self.current_odom_xy_theta is not None:
             old_odom_xy_theta = self.current_odom_xy_theta
@@ -260,18 +303,23 @@ class PF:
         
         dr1 = math.atan2(delta[1], delta[0]) - old_odom_xy_theta[2]
         dt = math.sqrt((delta[0]**2) + (delta[1]**2))
+        
+        #compute IMU bounds constraint
+        wheel_bias_factor = 0.03 # limit 3% deviation
+        self.ins_bounds["trns"] += dt
+        
         #uncertainty test
-        uncertainty_flag = self.improvishment_flag
+        uncertainty_flag = False#self.improvishment_flag
         large_angle_turn_flag = np.abs(new_odom_xy_theta[2]-old_odom_xy_theta[2]) > 0.02
         for particle in self.particles:           
             dr1_noisy = dr1 + np.random.normal(0, self.sigma_rot1)
-            dt_noisy = dt * self.wheel_radius_bias + np.random.normal(0, self.sigma_trans)
+            dt_noisy = dt + np.random.normal(0, self.sigma_trans)
             #Add measurement noise
             particle["theta"] += dr1
             particle["x"] += dt_noisy * np.cos(particle["theta"] + dr1_noisy)
             particle["y"] += dt_noisy * np.sin(particle["theta"] + dr1_noisy)
             particle["theta"] += (delta[2] - dr1_noisy)
-            #particle["theta"] += imu_angle_bias
+            particle["theta"] += imu_angle_bias
             particle["theta"] = (particle["theta"] + np.pi) % (2 * np.pi) - np.pi
             #Add along-track and cross-track noise (for higher flexibility)
             R = np.array([[np.cos(-particle["theta"]), -np.sin(-particle["theta"])], [np.sin(-particle["theta"]), np.cos(-particle["theta"])]])
@@ -279,9 +327,9 @@ class PF:
             xy_rotated = np.dot(R, xy)
             
 
-            sigma_factor_along_track = 0.04 if uncertainty_flag else 1e-8
-            sigma_factor_cross_track = 0.02 if uncertainty_flag else 1e-8
-            sigma_along_track = (dt / 25) if not large_angle_turn_flag else (dt / 50)
+            sigma_factor_along_track = 0.04 if uncertainty_flag else 0
+            sigma_factor_cross_track = 0.1 if uncertainty_flag else 0
+            sigma_along_track = (dt / 50) if not large_angle_turn_flag else (dt / 50)
             error_along_track = np.random.normal(0, sigma_along_track + sigma_factor_along_track)
             sigma_cross_track = dt / 80
             error_cross_track = np.random.normal(0, sigma_cross_track + sigma_factor_cross_track)
@@ -289,6 +337,7 @@ class PF:
             xy_rotated_back = np.dot(np.linalg.inv(R), xy_rotated_plus_errs)
             particle["x"] = xy_rotated_back[0]
             particle["y"] = xy_rotated_back[1]         
+            particle["trns"] += dt_noisy + error_along_track
             #Add constraints: drivable area, max bias of INS
             #particle = self.getClosestToINSBoundaries(particle)
             x_on_map = round(particle["x"] - new_odom_xy_theta[0] + drivableArea.shape[0] / 2)
@@ -300,19 +349,33 @@ class PF:
             particle["y"] += dy
 
     def eval_sensor_model(self, worldRef, extTracks, dynTracks, firstWorldRef, mapCenter):
-        w = 5
         for particle in self.particles:
-            total_score = 1e-6 # for accumulating probabilities
+            dynamic_static_res_factor = 5 #static points are 10 times in size than dynamic points
+            static_score = 1e-6
+            dynamic_score = 1e-6
+            static_length = 1
+            total_score = static_score + dynamic_score # for accumulating probabilities
+            num_dyn_tracks = 0
+            if 1 and not self.isTranslationInINSBoundaries(particle):
+                particle['weight'] = total_score
+                continue
             for i_ext_track, ext_track in enumerate(extTracks):
-                score = self.eval_polynom_map_match(ext_track, particle, worldRef)
-                total_score += score
+                score, polynom_len = self.eval_polynom_map_match(ext_track, particle, worldRef)
+                static_score += score
+                static_length += polynom_len
                 
             for i_dyn, dyn_track in enumerate(dynTracks):
                 score = self.eval_dynamic_track_map_match(dyn_track, particle, worldRef, firstWorldRef)
-                total_score += w * score
-            
+                dynamic_score += dynamic_static_res_factor * score
+                if score > 0:
+                    num_dyn_tracks += 1
+                    
+            wd = (num_dyn_tracks * 100) / static_length
+            #print(f"num_dyn_tracks = {num_dyn_tracks} static_length = {static_length} wd = {wd} static_score = {static_score} dynamic_score = {dynamic_score}")
+            total_score = static_score + wd * dynamic_score
+                
             particle['weight'] = total_score
-
+            
         #normalize weights
         normalizer = sum([p['weight'] for p in self.particles])
 
@@ -436,7 +499,7 @@ class MapMatching:
         
         return mask
 
-    def run(self, extTracks, nuscMap, dynTracks, lanes, firstWorldRef, IMURelativeRef):
+    def run(self, extTracks, nuscMap, dynTracks, lanes, firstWorldRef, IMURelativeRef,lane_offset=[0,0]):
         try:
             last_output = np.array([self.output_position['x'], self.output_position['y']])
         except:
@@ -449,16 +512,18 @@ class MapMatching:
         #lanes = np.concatenate(lanes, axis=0)
         if self.pf.current_odom_xy_theta is None:
             self.pf.initialize_particles(self.N, IMURelativeRef)
-        drivable_area = self.getDrivableArea(nuscMap, firstWorldRef + last_output)
+        drivable_area = self.getDrivableArea(nuscMap, firstWorldRef + IMURelativeRef[0:2])
         self.pf.sample_motion_model(IMURelativeRef, drivable_area)
         #road_map = self.getMapReference(nuscMap, origRadarRef)
         self.road_map = getCombinedMap(nuscMap, firstWorldRef+last_output, patchSize=300, res_factor=res_factor)
-        self.static_sigma1_map = build_probability_map(self.road_map, sigma=2.)
-        self.static_sigma4_map = build_probability_map(self.road_map, sigma=8.)
+        self.static_sigma1_map = build_probability_map(self.road_map, sigma=4.)
+        self.static_sigma4_map = build_probability_map(self.road_map, sigma=12.)
         sparse_scatter = drawLanes(nuscMap, ego_trns=firstWorldRef+last_output)
+        sparse_scatter[:, 0] += lane_offset[0]
+        sparse_scatter[:, 1] += lane_offset[1]
         lanes = scatter_to_image(sparse_scatter, center=firstWorldRef+last_output, res_factor=res_factor, patch_size=300)
         lanes[lanes == 1] = 255
-        self.lanes_map = build_probability_map(lanes, sigma=3.)
+        self.lanes_map = build_probability_map(lanes, sigma=4.)
         self.pf.setNDTMaps(road_map=self.road_map, static_sigma1_map=self.static_sigma1_map, static_sigma4_map=self.static_sigma1_map, 
                           lanes_map=self.lanes_map, map_reference_point=last_output, res_factor=res_factor)
         self.pf.eval_sensor_model(IMURelativeRef, extTracks, dynTracks, firstWorldRef, mapCenter=last_output)
@@ -482,9 +547,9 @@ class MapMatching:
         debug = True if self.pf.counter > 2000 else False
         for ext_track in extTracks:
             true_pos_particle = {"x": gtRelativeRef[0], "y": gtRelativeRef[1], "theta": gtRelativeRef[2]}
-            cost_true = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, imuRelativeRef)
-            cost_best = self.pf.eval_polynom_map_match(ext_track, self.best_particle, imuRelativeRef)
-            cost_mean = self.pf.eval_polynom_map_match(ext_track, mean_particle, imuRelativeRef)
+            cost_true, _ = self.pf.eval_polynom_map_match(ext_track, true_pos_particle, imuRelativeRef)
+            cost_best, _ = self.pf.eval_polynom_map_match(ext_track, self.best_particle, imuRelativeRef)
+            cost_mean, _ = self.pf.eval_polynom_map_match(ext_track, mean_particle, imuRelativeRef)
             #print("cost_gt", cost_true, "cost_best", cost_best, "cost_mean", cost_mean)
             #print("gt", true_pos_particle, "best", self.best_particle, "mean", mean_particle)
             self.cost_true.append(cost_true)

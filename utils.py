@@ -98,7 +98,7 @@ class PointObjectTrack:
         self.kf.x = x.T # x,y
         self.kf.F = np.diag([1,1])
         self.kf.P = P
-        self.kf.Q = np.diag([0.2,0.2])#np.zeros((2,2))
+        self.kf.Q = np.diag([1e-4,1e-4])#np.zeros((2,2))
         self.kf.H = np.eye(2)
         self.saver = Saver(self.kf)
         self.create_frame_idx = create_frame_idx
@@ -247,7 +247,7 @@ class ExtendedObjectTrack:
         #self.kf.Q = np.zeros((5,5))
         #self.kf.Q[3,3] = 5
         #self.kf.Q[4,4] = 5
-        self.kf.Q = np.diag([1e-5, 1e-8, 1e-10, 5, 5])
+        self.kf.Q = np.diag([2e-3, 5e-4, 1e-7, 5, 5])
         self.saver = Saver(self.kf)
         self.create_frame_idx = create_frame_idx
         self.last_update_frame_idx = create_frame_idx
@@ -297,11 +297,18 @@ class ExtendedObjectTrack:
     
     def getElements(self):
         state = self.getStateVector()
-        x_elements = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*10))
+        x_elements = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*5))
         y_elements = state[0] + state[1] * x_elements + state[2] * x_elements**2
         elements = np.array([x_elements, y_elements]).T if self.fx_flag else np.array([y_elements, x_elements]).T
         
         return elements
+    
+    def getElementsInFOV(self, pose):
+        elements = self.getElements()
+        angle = np.arctan2(elements[:,1]-pose[1], elements[:,0]-pose[0])
+        elements_in_fov = elements[abs(pose[2]-angle) < 1.047]
+        
+        return elements_in_fov
     
     def getFxFlag(self):
         return self.fx_flag

@@ -45,7 +45,7 @@ class NuscenesSimulation():
         directory = kwargs.pop('directory', r"/home/kfir/workspace/nuScenes/v1.0-trainval")
         self.video_list = kwargs.pop('video_list', {'video' : False, 'video_debug': False, 'video_pf': False, 'video_pf_xy': False})
         self.save_processed = kwargs.pop('save_processed', False)
-        self.nmax = kwargs.pop('Nmax', 800)
+        self.nmax = kwargs.pop('Nmax', 1800)
         self.mm = model.mm
         self.dataset = NuscenesDataset(nusc=nusc, directory=directory, scene_id=scene_id, N=self.nmax)
         self.video = NuscenesVideo(history=True, scene=scene_id)

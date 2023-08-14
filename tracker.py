@@ -13,15 +13,15 @@ from scipy.spatial.distance import cdist
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=4,deltaE=4)
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=3,deltaE=3)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
-        self.eta = 70
+        self.eta = 40
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 5#4
-        self.ext_max_non_update_iterations = 7#5
+        self.pnt_max_non_update_iterations = 8#4
+        self.ext_max_non_update_iterations = 10#5
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -474,7 +474,7 @@ class StaticTracker:
             
             M, INVCOV, det = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             #DBSCAN
-            clus = DBSCAN(eps=5, min_samples=2).fit(M)
+            clus = DBSCAN(eps=4, min_samples=2).fit(M)
             labels = clus.labels_ 
             x = M[:,0]
             y = M[:,1]

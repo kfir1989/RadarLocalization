@@ -43,8 +43,8 @@ class SimulatedProcessedDatabase(ProcessedDatabase):
     
             
 class NuscenesProcessedDatabase(ProcessedDatabase):
-    def __init__(self, scene_id, **kwargs):
-        self.dir_name = os.path.join("images", f"{scene_id}","database")    
+    def __init__(self, scene_id, base_dir='images', **kwargs):
+        self.dir_name = os.path.join(base_dir, f"{scene_id}","database")    
         print("self.dir_name", self.dir_name)
         os.system("mkdir -p " + self.dir_name)
     

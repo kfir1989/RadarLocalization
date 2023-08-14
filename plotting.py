@@ -8,6 +8,8 @@ import nuscenes.map_expansion.arcline_path_utils as path_utils
 from matplotlib.ticker import MaxNLocator
 from metrics import calcTrackPosition
 import os
+import pickle
+from registration import classifyShape
 
 def drawLanes(ax, nusc_map, ego_trns, sx=0, sy=0):
     lane_ids = nusc_map.get_records_in_radius(ego_trns[0], ego_trns[1], 80, ['lane', 'lane_connector'])
@@ -28,7 +30,8 @@ def drawLanes(ax, nusc_map, ego_trns, sx=0, sy=0):
             
         ax.scatter(poses[:,0], poses[:,1],color='orange',s=2)
 
-def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000, color='red', label='track'):
+def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000, color='red', label='track',res_factor=1):
+    arrow_plot, traj_plot = None, None
     if trk.confirmed:
         hstate, hego, hspeed = trk.getHistory()
         n_last_frames = min(n_last_frames,hstate.shape[0])
@@ -44,15 +47,17 @@ def drawTrack(ax, trk, x_offset=0, y_offset=0, velThr=2, n_last_frames=1000, col
             abs_vel = np.mean(np.linalg.norm(tspeed,axis=1), axis=0)
             print(f"abs_vel ={abs_vel}")
             if abs_vel < velThr:
-                return
+                return None, None
 
-            ax.plot(tstate[-n_last_frames:,0]+x_offset, tstate[-n_last_frames:,1]+y_offset, color=color,label=label)
+            traj_plot, = ax.plot(res_factor*(tstate[-n_last_frames:,0]+x_offset), res_factor*(tstate[-n_last_frames:,1]+y_offset), color=color,label=label)
             #dx = tstate[int(history_len / 2) + 1,0]-tstate[int(history_len / 2) - 1,0]
             #dy = tstate[int(history_len / 2) + 1,1]-tstate[int(history_len / 2) - 1,1]
             dx = tstate[int(history_len*2/3) + 1,0]-tstate[int(history_len*2/3) - 1,0]
             dy = tstate[int(history_len*2/3) + 1,1]-tstate[int(history_len*2/3) - 1,1]
             #ax.arrow(np.mean(tstate[-n_last_frames:,0]+x_offset), np.mean(tstate[-n_last_frames:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05)
-            ax.arrow(np.mean(tstate[-1:,0]+x_offset), np.mean(tstate[-1:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05, color=color)
+            arrow_plot = ax.arrow(np.mean(tstate[-1:,0]+x_offset), np.mean(tstate[-1:,1]+y_offset), dx[0], dy[0], shape='full', lw=13, length_includes_head=True, head_width=.05, color=color)
+            
+    return arrow_plot, traj_plot
 
 def isLateralPolynom(polynom, heading):
     R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
@@ -339,7 +344,7 @@ class PolynomsOnMapGraph():
     def __init__(self):
         self.counter = 0
         
-    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[], res_factor=1.):
+    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[], res_factor=1):
         #Polynoms and GT on map
         if self.counter == 0:
             x_min = np.min(ego_path[:,0])
@@ -372,7 +377,7 @@ class PolynomsOnMapGraph():
             x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
             y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
             #print(f"y_plot = {y_plot} self.first_pos[0] = {self.first_pos[0]} self.patch_size = {self.patch_size} (y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor = {(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor}")
-            ax.plot((x_plot-self.first_pos[0]+self.patch_size*0.5)*res_factor,(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor,color=colors[c],linewidth=1,label=labels[c]) 
+            ax.plot((x_plot-self.first_pos[0]+self.patch_size*0.5)*res_factor,(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor,color=colors[c],linewidth=4,label=labels[c]) 
         
         ax.scatter(res_factor*(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5),res_factor*(gt_pos[1]-self.first_pos[1]+self.patch_size*0.5),s=2,color="green",label="GT")
             
@@ -603,8 +608,8 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
         pf_track_pos_arr[idx, :] = pf_track_pos
         imu_track_pos_arr[idx, :] = imu_track_pos
         R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
-        cov_cross_arr[idx] = np.dot(R,pf_cov)[1,1]
-        cov_along_arr[idx] = np.dot(R,pf_cov)[0,0]
+        cov_cross_arr[idx] = np.sqrt(np.dot(R,pf_cov)[1,1])
+        cov_along_arr[idx] = np.sqrt(np.dot(R,pf_cov)[0,0])
         n_polynoms_arr[idx] = len(polynoms)
         for trk in dynamic_tracks:
             if isVehicle(trk):
@@ -614,7 +619,7 @@ def generateGraphCrossNumPolynoms(data, frames, ax):
     ax[0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
     ax[0].plot(timestamp_arr, pf_cross_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
     ax[0].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
-    ax[0].plot(timestamp_arr, -1*np.sqrt(cov_cross_arr) * 2, color='orange', label='std Lat', linewidth=3)
+    ax[0].plot(timestamp_arr, -1*np.sqrt(cov_cross_arr) * 2, color='orange', label='RadLoc Lat STD', linewidth=3)
     ax[0].plot(timestamp_arr, np.sqrt(cov_cross_arr) * 2, color='orange', linewidth=3)
     
     #sttaic tracks
@@ -713,17 +718,17 @@ def generateGraphPath(data, frames, nusc_map, ax, xlimits=[], ylimits=[]):
     y_min = np.min(ego_path[:,1])
     y_max = np.max(ego_path[:,1])
     y_mean = 0.5*(y_min+y_max)
-    patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+    patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 500
 
     first_pos = [x_mean, y_mean]
     patch_size = patch_size
+    print(f"first_pos = {first_pos}")
     #edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
-    edges = getLayer(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
+    edges = getLayer(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size, res_factor=10)
     edges[edges==0] = 255
     edges[edges==1] = 200
-    print(edges)
 
-    ax.imshow(edges, origin='lower', cmap='gray', vmin=0, vmax=255)
+    ax.imshow(edges, origin='lower', cmap='gray', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
     ax.grid(False)
 
     xlim = xlimits if xlimits else [patch_size/2 - (x_mean-x_min) - 50,patch_size/2 + (x_max-x_mean) + 50]
@@ -1072,6 +1077,352 @@ def generatePositionCovarianceGraph(data, frames, fig, ax, nusc_map, dirname, xl
         
     return ax
 
+def generateLocalizationFullGraph(data, frames, fig, ax, nusc_map, dirname, xlimits=[], ylimits=[]):
+    
+    N = len(frames)
+    gt_track_pos_arr = np.zeros((N,2))
+    pf_track_pos_arr = np.zeros((N,2))
+    imu_track_pos_arr = np.zeros((N,2))
+    pf_scatter_pos_arr = np.zeros((200,2))
+    
+    x = np.arange(0,10)
+    y = np.arange(0,10)
+    pf_line, = ax.plot(x,y,color="blue",alpha=1,label="RadLoc")
+    gt_line, = ax.plot(x,y,color="green",alpha=1,label="GT")
+    imu_line, = ax.plot(x,y,color="red",alpha=1,label="IMU")
+    pf_scatter = ax.scatter(x,y,color="blue",alpha=1,s=0.01)
+    poly_plot = [None] * 20
+    #for j in range(0,20):
+        #poly_plot[j], = ax.plot(x,y,color="magenta",alpha=1)
+    ax.legend(loc="upper left", prop={'size': 26})
+    
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        gt_heading = np.deg2rad(video_data['heading'])
+        pf_best_pos = mm_results['pf_best_pos']
+        pf_best_theta = mm_results['pf_best_theta']
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        pf_mean_theta = mm_results['pf_mean_theta']
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        all_particles = mm_results['all_particles']
+        cost_true = mm_results['cost_true']
+        cost_mean = mm_results['cost_mean']
+        cost_dyn_true = mm_results['cost_dyn_true']
+        cost_dyn_mean = mm_results['cost_dyn_mean']
+        pf_cov = mm_results['covariance'] * 2
+        
+        gt_track_pos_arr[idx, :] = gt_pos[0:2]
+        pf_track_pos_arr[idx, :] = pf_mean_pos[0:2]
+        imu_track_pos_arr[idx, :] = imu_pos[0:2]
+        
+        x_min = np.min(ego_path[:,0])
+        x_max = np.max(ego_path[:,0])
+        x_mean = 0.5*(x_min+x_max)
+        y_min = np.min(ego_path[:,1])
+        y_max = np.max(ego_path[:,1])
+        y_mean = 0.5*(y_min+y_max)
+        patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+
+        if idx == 0:
+            first_pos = [x_mean, y_mean]
+            patch_size = patch_size
+            #edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size)
+            res_factor=10
+            print(f"first_pos = {first_pos} patch_size = {patch_size}")
+            edges = getLayer(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size,res_factor=res_factor)
+            edges[edges==0] = 255
+            edges[edges==1] = 200
+
+            ax.imshow(edges, origin='lower', cmap='gray', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
+            ax.grid(False)
+            fig.savefig(os.path.join(dirname, f'map2.png'))
+
+        pf_scatter_pos_arr[:,0] = [p["x"] for p in all_particles] + ego_path[0,0]
+        pf_scatter_pos_arr[:,1] = [p["y"] for p in all_particles] + ego_path[0,1]
+        res_factor = 1
+        x_map_offset = -first_pos[0]+patch_size*0.5
+        y_map_offset = -first_pos[1]+patch_size*0.5
+
+        pf_line.set_xdata(res_factor*(x_map_offset+pf_track_pos_arr[:idx+1, 0]))
+        pf_line.set_ydata(res_factor*(y_map_offset+pf_track_pos_arr[:idx+1, 1]))
+        pf_scatter.set_offsets(np.column_stack((res_factor*(x_map_offset+pf_scatter_pos_arr[:, 0]), res_factor*(y_map_offset+pf_scatter_pos_arr[:, 1]))))
+        #pf_scatter.set_ydata(res_factor*(y_map_offset+pf_scatter_pos_arr[:, 1]))
+        gt_line.set_xdata(res_factor*(x_map_offset+gt_track_pos_arr[:idx+1, 0]))
+        gt_line.set_ydata(res_factor*(y_map_offset+gt_track_pos_arr[:idx+1, 1]))
+        imu_line.set_xdata(res_factor*(x_map_offset+imu_track_pos_arr[:idx+1, 0]))
+        imu_line.set_ydata(res_factor*(y_map_offset+imu_track_pos_arr[:idx+1, 1]))
+        #ax = confidence_ellipse(res_factor*(pf_mean_pos[0]+x_map_offset), res_factor*(pf_mean_pos[1]+y_map_offset), pf_cov, ax, edgecolor='blue')
+        
+        x_lim_offset = 1 * (5 + max(abs(imu_pos[0]-pf_mean_pos[0]), max(abs(gt_pos[0]-pf_mean_pos[0]), np.linalg.norm(pf_cov))))
+        y_lim_offset = 1 * (5 + max(abs(imu_pos[1]-pf_mean_pos[1]), max(abs(gt_pos[1]-pf_mean_pos[1]), np.linalg.norm(pf_cov))))
+        ax.set_xlim([res_factor * (pf_mean_pos[0]+x_map_offset - x_lim_offset), res_factor * (pf_mean_pos[0]+x_map_offset+x_lim_offset)])
+        ax.set_ylim([res_factor*(pf_mean_pos[1]+y_map_offset - y_lim_offset), res_factor*(pf_mean_pos[1]+y_map_offset + y_lim_offset)])
+            
+        fig.savefig(os.path.join(dirname, f'track_{idx}.png'))
+        #ax.patches.pop()
+        #ax.clear()
+        
+    return ax
+
+import gc
+def generateDetectionsFullGraph(data, frames, nusc_map, dirname, xlimits=[], ylimits=[]):
+    
+    N = len(frames)
+    gt_track_pos_arr = np.zeros((N,2))
+    pf_track_pos_arr = np.zeros((N,2))
+    imu_track_pos_arr = np.zeros((N,2))
+    pf_scatter_pos_arr = np.zeros((200,2))
+
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        gt_heading = np.deg2rad(video_data['heading'])
+        pf_best_pos = mm_results['pf_best_pos']
+        pf_best_theta = mm_results['pf_best_theta']
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        pf_mean_theta = mm_results['pf_mean_theta']
+        imu_pos = np.array(video_data["pos_imu"][0:3])
+        ego_path = video_data["ego_path"][:,:]
+        ego_trns = video_data["ego_trns"]
+        all_particles = mm_results['all_particles']
+        cost_true = mm_results['cost_true']
+        cost_mean = mm_results['cost_mean']
+        cost_dyn_true = mm_results['cost_dyn_true']
+        cost_dyn_mean = mm_results['cost_dyn_mean']
+        pf_cov = mm_results['covariance'] * 2
+        print(f"gt_heading = {gt_heading}")
+        
+        gt_track_pos_arr[idx, :] = gt_pos[0:2]
+        pf_track_pos_arr[idx, :] = pf_mean_pos[0:2]
+        imu_track_pos_arr[idx, :] = imu_pos[0:2]
+        
+        fig, ax, pf_line0, gt_line0, imu_line0, pf_scatter, pf_line1, gt_line1, imu_line1, poly_plot, arrow_plot, traj_plot, patch_size, first_pos  = getFigure(ego_path, dirname, nusc_map)
+        
+         
+        pf_scatter_pos_arr[:,0] = [p["x"] for p in all_particles] + ego_path[0,0]
+        pf_scatter_pos_arr[:,1] = [p["y"] for p in all_particles] + ego_path[0,1]
+        res_factor = 1
+        x_map_offset = -first_pos[0]+patch_size*0.5
+        y_map_offset = -first_pos[1]+patch_size*0.5
+        
+        
+        ax[0] = plotLocalizationFullGraph(ax[0], idx, ego_path,
+                                       x_map_offset, y_map_offset, res_factor,
+                                       pf_line0, pf_scatter, gt_line0, imu_line0,
+                                       gt_pos, imu_pos, pf_mean_pos, pf_cov, 
+                                       pf_track_pos_arr, gt_track_pos_arr, imu_track_pos_arr, pf_scatter_pos_arr)
+        
+        gt_pose = np.array([gt_pos[0], gt_pos[1], gt_heading-1.57])
+        ax[1] = plotDetectionsFullGraph(ax[1], idx, 
+                                     ego_path, gt_pose,
+                                     pf_track_pos_arr, gt_track_pos_arr, imu_track_pos_arr,
+                                     res_factor, x_map_offset, y_map_offset,
+                                     pf_line1, gt_line1, imu_line1,
+                                     arrow_plot, traj_plot, poly_plot,
+                                     polynoms, dynamic_tracks)
+            
+        fig.savefig(os.path.join(dirname, f'track_{t}.png'))
+        ax[0].clear()
+        ax[1].clear()
+        plt.close(fig)
+        gc.collect()
+        #ax.patches.pop()
+        #ax.clear()
+        #for j in range(0,len(polynoms)):
+        #    poly_plot[j].remove()
+        #for j in range(0,len(dynamic_tracks)):
+        #    if arrow_plot[j] is not None:
+        #        arrow_plot[j].remove()
+        #        traj_plot[j].remove()
+
+def getFigure(ego_path, dirname, nusc_map):
+    x_min = np.min(ego_path[:,0])
+    x_max = np.max(ego_path[:,0])
+    x_mean = 0.5*(x_min+x_max)
+    y_min = np.min(ego_path[:,1])
+    y_max = np.max(ego_path[:,1])
+    y_mean = 0.5*(y_min+y_max)
+    patch_size = int(max(abs(y_max-y_min), abs(x_max-x_min))) + 100
+    first_pos = [x_mean, y_mean]
+        
+    pkl_file_path = os.path.join(dirname, f'map.pkl')
+    if os.path.exists(pkl_file_path):
+        with open(pkl_file_path, 'rb') as f:
+            fig = pickle.load(f)
+            ax = fig.axes
+    else:
+        fig, ax = plt.subplots(1,2,figsize=(20,12))
+        
+        
+        res_factor0=10
+        res_factor1=5
+        print(f"first_pos = {first_pos} patch_size = {patch_size}")
+        drivable_area = getLayer(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size,res_factor=res_factor0)
+        drivable_area[drivable_area==0] = 255
+        drivable_area[drivable_area==1] = 200
+        ax[0].imshow(drivable_area, origin='lower', cmap='gray', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
+        #drivable_area = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size,res_factor=res_factor1)
+        #ax[0].imshow(drivable_area, origin='lower', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
+        ax[0].grid(False)
+
+        edges = getCombinedMap(nuscMap=nusc_map, worldRef=first_pos, patchSize=patch_size,res_factor=res_factor1)
+        ax[1].imshow(edges, origin='lower', vmin=0, vmax=255, extent=[0,patch_size,0,patch_size])
+        ax[1].grid(False)
+        
+        figure_data = {'figure': fig, 'axes': ax}
+
+        # Save the figure data using pickle
+        with open(pkl_file_path, 'wb') as f:
+            pickle.dump(fig, f)
+        
+    
+    x = np.arange(0,10)
+    y = np.arange(0,10)
+    pf_line0, = ax[0].plot(x,y,color="blue",alpha=1,label="RadLoc")
+    gt_line0, = ax[0].plot(x,y,color="green",alpha=1,label="GT")
+    imu_line0, = ax[0].plot(x,y,color="red",alpha=1,label="IMU")
+    pf_scatter = ax[0].scatter(x,y,color="blue",alpha=1,s=0.05)
+    
+    pf_line1, = ax[1].plot(x,y,color="blue",alpha=1,label="RadLoc")
+    gt_line1, = ax[1].plot(x,y,color="green",alpha=1,label="GT")
+    imu_line1, = ax[1].plot(x,y,color="red",alpha=1,label="IMU")
+    
+    poly_plot = [None] * 40
+    arrow_plot = [None] * 40
+    traj_plot = [None] * 40
+    ax[0].legend(loc="upper left", prop={'size': 18})
+    ax[1].legend(loc="upper left", prop={'size': 14})
+    ax[0].set_xlabel('x [m]', fontsize=22)
+    ax[0].set_ylabel('y [m]', fontsize=22)
+    ax[1].set_xlabel('x [m]', fontsize=22)
+    ax[1].set_ylabel('y [m]', fontsize=22)
+    ax[0].tick_params(axis='x', labelsize=18)  # Adjust fontsize as needed
+    ax[0].tick_params(axis='y', labelsize=18)  # Adjust fontsize as needed
+    ax[1].tick_params(axis='x', labelsize=18)  # Adjust fontsize as needed
+    ax[1].tick_params(axis='y', labelsize=18)  # Adjust fontsize as needed
+    ax[0].set_title('Zoomed-In Pose Estimation Visualization', fontsize=28)
+    ax[1].set_title('Estimated Localization and Sensor Detections', fontsize=28)
+    
+    return fig, ax, pf_line0, gt_line0, imu_line0, pf_scatter, pf_line1, gt_line1, imu_line1, poly_plot, arrow_plot, traj_plot, patch_size, first_pos
+
+def plotLocalizationFullGraph(ax, idx, ego_path,
+                             x_map_offset, y_map_offset, res_factor,
+                              pf_line, pf_scatter, gt_line, imu_line,
+                              gt_pos, imu_pos, pf_mean_pos, pf_cov, 
+                             pf_track_pos_arr, gt_track_pos_arr, imu_track_pos_arr, pf_scatter_pos_arr):
+    
+    pf_line.set_xdata(res_factor*(x_map_offset+pf_track_pos_arr[:idx+1, 0]))
+    pf_line.set_ydata(res_factor*(y_map_offset+pf_track_pos_arr[:idx+1, 1]))
+    pf_scatter.set_offsets(np.column_stack((res_factor*(x_map_offset+pf_scatter_pos_arr[:, 0]), res_factor*(y_map_offset+pf_scatter_pos_arr[:, 1]))))
+    #pf_scatter.set_ydata(res_factor*(y_map_offset+pf_scatter_pos_arr[:, 1]))
+    gt_line.set_xdata(res_factor*(x_map_offset+gt_track_pos_arr[:idx+1, 0]))
+    gt_line.set_ydata(res_factor*(y_map_offset+gt_track_pos_arr[:idx+1, 1]))
+    imu_line.set_xdata(res_factor*(x_map_offset+imu_track_pos_arr[:idx+1, 0]))
+    imu_line.set_ydata(res_factor*(y_map_offset+imu_track_pos_arr[:idx+1, 1]))
+    #ax = confidence_ellipse(res_factor*(pf_mean_pos[0]+x_map_offset), res_factor*(pf_mean_pos[1]+y_map_offset), pf_cov, ax, edgecolor='blue')
+
+    x_lim_offset = 1 * (5 + max(abs(imu_pos[0]-pf_mean_pos[0]), max(abs(gt_pos[0]-pf_mean_pos[0]), np.linalg.norm(pf_cov))))
+    y_lim_offset = 1 * (5 + max(abs(imu_pos[1]-pf_mean_pos[1]), max(abs(gt_pos[1]-pf_mean_pos[1]), np.linalg.norm(pf_cov))))
+    ax.set_xlim([res_factor * (pf_mean_pos[0]+x_map_offset - x_lim_offset), res_factor * (pf_mean_pos[0]+x_map_offset+x_lim_offset)])
+    ax.set_ylim([res_factor*(pf_mean_pos[1]+y_map_offset - y_lim_offset), res_factor*(pf_mean_pos[1]+y_map_offset + y_lim_offset)])
+    
+    return ax
+        
+def plotDetectionsFullGraph(ax, idx, 
+                            ego_path, gt_pos,
+                            pf_track_pos_arr, gt_track_pos_arr, imu_track_pos_arr,
+                            res_factor, x_map_offset, y_map_offset,
+                            pf_line, gt_line, imu_line, 
+                            arrow_plot, traj_plot, poly_plot,
+                            polynoms, dynamic_tracks):
+    pf_line.set_xdata(res_factor*(x_map_offset+pf_track_pos_arr[:idx+1, 0]))
+    pf_line.set_ydata(res_factor*(y_map_offset+pf_track_pos_arr[:idx+1, 1]))
+    gt_line.set_xdata(res_factor*(x_map_offset+gt_track_pos_arr[:idx+1, 0]))
+    gt_line.set_ydata(res_factor*(y_map_offset+gt_track_pos_arr[:idx+1, 1]))
+    imu_line.set_xdata(res_factor*(x_map_offset+imu_track_pos_arr[:idx+1, 0]))
+    imu_line.set_ydata(res_factor*(y_map_offset+imu_track_pos_arr[:idx+1, 1]))
+
+    x_min = 1e6
+    x_max = -1e6
+    y_min = 1e6
+    y_max = -1e6
+    #Draw polynomials
+    for c,polynom in enumerate(polynoms):
+        xx = np.linspace(polynom["x_start"], polynom["x_end"], 100)
+        x_plot = xx if polynom["fxFlag"] else polynom["f"](xx)
+        y_plot = polynom["f"](xx) if polynom["fxFlag"] else xx 
+        x_plot, y_plot = getElementsInFOV(gt_pos, x_plot, y_plot)
+        if not x_plot.any():
+            continue
+        poly_plot[c], = ax.plot(res_factor*(x_plot+x_map_offset),res_factor*(y_plot+y_map_offset),color="magenta",linewidth=1,label="") 
+        if c == 0:
+            poly_plot[c].set_label('Static Extended Tracks')
+        
+        x_min = min(x_min, np.min(x_plot))
+        x_max = max(x_max, np.max(x_plot))
+        y_min = min(y_min, np.min(y_plot))
+        y_max = max(y_max, np.max(y_plot))
+        
+    
+    dyn_offset = gt_track_pos_arr[idx, :] - imu_track_pos_arr[idx,:]
+    #Draw Dynamic Tracks
+    draw_label = False
+    for j,trk in enumerate(dynamic_tracks):
+        print(f"dyn_offset = {dyn_offset} j = {j} len(dynamic_tracks) = {len(dynamic_tracks)}")
+        arrow_plot[j], traj_plot[j] = drawTrack(ax, trk, x_offset=(x_map_offset+dyn_offset[0]), y_offset=(y_map_offset+dyn_offset[1]), velThr=2, n_last_frames=10, color='cyan',label="",res_factor=res_factor)
+        if arrow_plot[j] is None:
+            continue
+        if not draw_label:
+            arrow_plot[j].set_label('Dynamic Tracks')
+            draw_label = True
+        
+    ax.legend(loc="upper left", prop={'size': 20})
+
+    
+    x_min = min(x_min, gt_track_pos_arr[idx,0] - 20)
+    x_max = max(x_max, gt_track_pos_arr[idx,0] + 20)
+    y_min = min(y_min, gt_track_pos_arr[idx,1] - 20)
+    y_max = max(y_max, gt_track_pos_arr[idx,1] + 20)
+    
+    incline = [0,0]
+    if idx > 10:
+        incline = (gt_track_pos_arr[idx]-gt_track_pos_arr[idx-10])/10
+    
+    if incline[0]:
+        norm_incline = np.linalg.norm(incline)
+        if incline[0] < 0:
+            x_min = min(x_min, gt_track_pos_arr[idx,0] + incline[0] / norm_incline * 80)
+        else:
+            x_max = max(x_max, gt_track_pos_arr[idx,0] + incline[0] / norm_incline * 80)
+        
+        if incline[1] < 0:
+            y_min = min(y_min, gt_track_pos_arr[idx,1] + incline[1] / norm_incline * 80)
+        else:
+            y_max = max(y_max, gt_track_pos_arr[idx,1] + incline[1] / norm_incline * 80)
+
+    x_min = res_factor * x_min + x_map_offset
+    x_max = res_factor * x_max + x_map_offset
+    y_min = res_factor * y_min + y_map_offset
+    y_max = res_factor * y_max + y_map_offset
+
+    ax.set_xlim([min(x_min,x_max), max(x_min,x_max)])
+    ax.set_ylim([min(y_min,y_max), max(y_min,y_max)])
+    
+    return ax
+
+def getElementsInFOV(pose, x, y):
+    angle = np.arctan2(y-pose[1], x-pose[0])
+    #print(f"angle = {angle} pose[2] = {pose[2]}")
+    x_in_fov = x[abs(pose[2]-angle) < 1.047]
+    y_in_fov = y[abs(pose[2]-angle) < 1.047]
+
+    return x_in_fov, y_in_fov
+
 def generateVideo(name, dirname, fps=1):
     os.system("mkdir -p " + dirname)
     filenames = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
@@ -1088,6 +1439,69 @@ def generateVideo(name, dirname, fps=1):
 
     cv2.destroyAllWindows()
     video.release()
+    
+
+def generateGraphAlongNumShapes(data, frames, ax):
+    N = len(frames)
+    timestamp_arr = np.linspace(0, N / 12.5, N + 1)[0:-1]
+    pf_cross_track_errors_arr = np.zeros(N)
+    pf_along_track_errors_arr = np.zeros(N)
+    imu_cross_track_errors_arr = np.zeros(N)
+    imu_along_track_errors_arr = np.zeros(N)
+    gt_track_pos_arr = np.zeros((N,2))
+    pf_track_pos_arr = np.zeros((N,2))
+    imu_track_pos_arr = np.zeros((N,2))
+    n_arcs = np.zeros(N)
+    n_clothoids = np.zeros(N)
+    n_corners = np.zeros(N)
+    cov_cross_arr = np.zeros(N)
+    cov_along_arr = np.zeros(N)
+    
+    for idx, t in enumerate(frames):
+        video_data, polynoms, points, dynamic_tracks, dynamic_clusters, mm_results, translation, debug_info = data.load(t)
+        
+        gt_pos = np.array(video_data['pos'])
+        pf_mean_pos = np.array(mm_results['pf_mean_pos'])
+        imu_pos = np.array(video_data["pos_imu"][0:2])
+        ego_path = video_data["ego_path"][:,0:2]
+        ego_trns = video_data["ego_trns"]
+        pf_cov = np.array(mm_results['covariance']) * 4# + np.diag([0.01,0.01])
+        heading = gt_pos[2]
+        
+        gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
+        pf_track_errors = pf_track_pos - gt_track_pos
+        imu_track_errors = imu_track_pos - gt_track_pos
+        
+        pf_cross_track_errors_arr[idx] = pf_track_errors[0]
+        pf_along_track_errors_arr[idx] = pf_track_errors[1]
+        imu_cross_track_errors_arr[idx] = imu_track_errors[0]
+        imu_along_track_errors_arr[idx] = imu_track_errors[1]
+        gt_track_pos_arr[idx, :] = gt_track_pos
+        pf_track_pos_arr[idx, :] = pf_track_pos
+        imu_track_pos_arr[idx, :] = imu_track_pos
+        R = np.array([[np.cos(-heading), -np.sin(-heading)], [np.sin(-heading), np.cos(-heading)]])
+        cov_cross_arr[idx] = np.sqrt(np.dot(R,pf_cov)[1,1])
+        cov_along_arr[idx] = np.sqrt(np.dot(R,pf_cov)[0,0])
+        
+        (lines, circles, clothoids, corners) = classifyShape(polynoms)
+        n_arcs[idx] = len(circles)
+        n_clothoids[idx] = len(clothoids)
+        n_corners[idx] = len(corners)
+    
+    #Along-Track Err(t)
+    ax[0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
+    ax[0].plot(timestamp_arr, pf_along_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
+    ax[0].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+    ax[0].plot(timestamp_arr, -1*np.sqrt(cov_along_arr) * 4, color='orange', label='RadLoc Lon STD', linewidth=3)
+    ax[0].plot(timestamp_arr, np.sqrt(cov_along_arr) * 4, color='orange', linewidth=3)
+    
+    #static tracks
+    ax[1].plot(timestamp_arr, n_arcs,label='Arcs', linewidth=3)
+    ax[1].plot(timestamp_arr, n_clothoids,label='Clothoids', linewidth=3)
+    ax[1].plot(timestamp_arr, n_corners,label='Corners', linewidth=3)
+
+    
+    return ax
     
 
 """
