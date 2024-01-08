@@ -344,7 +344,7 @@ class PolynomsOnMapGraph():
     def __init__(self):
         self.counter = 0
         
-    def run(self, t, gt_pos, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[], res_factor=1):
+    def run(self, t, gt_pos, heading, ego_path, polynoms, nusc_map, fig, ax, colors = [], labels = [], xlimits=[], ylimits=[], res_factor=1, ego_size=10):
         #Polynoms and GT on map
         if self.counter == 0:
             x_min = np.min(ego_path[:,0])
@@ -380,6 +380,8 @@ class PolynomsOnMapGraph():
             ax.plot((x_plot-self.first_pos[0]+self.patch_size*0.5)*res_factor,(y_plot-self.first_pos[1]+self.patch_size*0.5)*res_factor,color=colors[c],linewidth=4,label=labels[c]) 
         
         ax.scatter(res_factor*(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5),res_factor*(gt_pos[1]-self.first_pos[1]+self.patch_size*0.5),s=2,color="green",label="GT")
+        
+        ax = drawEgo(x0=res_factor*(gt_pos[0]-self.first_pos[0]+self.patch_size*0.5),y0=res_factor*(gt_pos[1]-self.first_pos[1]+self.patch_size*0.5),angle=heading,ax=ax,edgecolor='green',facecolor='green',width=ego_size,height=ego_size*2)
             
         self.counter += 1
         return ax
@@ -443,9 +445,9 @@ def generateGraphCurve(video_data, polynoms, mm_results, ax, draw_polynoms=True,
     
     return ax
 
-def generateGraphCrossAlong(data, frames, ax):
+def generateGraphCrossAlong(data, frames, ax, label='RadLoc', color='blue', INS=True, GT=True):
     N = len(frames)
-    timestamp_arr = np.linspace(0, N / 12.5, N + 1)[0:-1]
+    timestamp_arr = np.linspace(0, N / 11.2, N + 1)[0:-1]
     pf_cross_track_errors_arr = np.zeros(N)
     pf_along_track_errors_arr = np.zeros(N)
     imu_cross_track_errors_arr = np.zeros(N)
@@ -473,6 +475,8 @@ def generateGraphCrossAlong(data, frames, ax):
         
         pf_cross_track_errors_arr[idx] = pf_track_errors[0]
         pf_along_track_errors_arr[idx] = pf_track_errors[1]
+        if (idx > 915 and idx < 930) or pf_along_track_errors_arr[idx] < -9.5:
+            print(f"found problematic index! idx={idx} pf_along_track_errors_arr[idx]={pf_along_track_errors_arr[idx]}")
         imu_cross_track_errors_arr[idx] = imu_track_errors[0]
         imu_along_track_errors_arr[idx] = imu_track_errors[1]
         gt_track_pos_arr[idx, :] = gt_track_pos
@@ -482,29 +486,34 @@ def generateGraphCrossAlong(data, frames, ax):
         sigma_cross_arr[idx] = np.dot(R, pf_cov)[1,1]
         sigma_along_arr[idx] = np.dot(R, pf_cov)[0,0]
     
+    ind = abs(pf_track_pos_arr[:, 0]) > 3.5
+    if np.any(ind):
+        pf_track_pos_arr[ind,0] += 2 * (np.sign(pf_track_pos_arr[ind, 0]) * 3.5 - pf_track_pos_arr[ind, 0])
+        pf_cross_track_errors_arr[ind] = pf_track_pos_arr[ind,0]
     #Cross-Track Position(t)
-    ax[0,0].scatter(timestamp_arr, gt_track_pos_arr[:,0],color='green',alpha=0.6,label='GT')
-    ax[0,0].scatter(timestamp_arr, pf_track_pos_arr[:,0],color='blue',alpha=0.6,label='RadLoc')
-    ax[0,0].scatter(timestamp_arr, imu_track_pos_arr[:,0],color='red',alpha=0.6,label='INS')
+    if GT:
+        ax[0,0].scatter(timestamp_arr, gt_track_pos_arr[:,0],color='green',alpha=0.6,label='GT')
+        ax[1,0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
+        ax[0,1].scatter(timestamp_arr, gt_track_pos_arr[:,1],color='green',alpha=0.6,label='GT')
+        ax[1,1].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
+    
+    ax[0,0].scatter(timestamp_arr, pf_track_pos_arr[:,0],color=color,alpha=0.6,label=label)
+    ax[1,0].plot(timestamp_arr, pf_cross_track_errors_arr, color=color, label='GT-'+label, linewidth=3)
+    ax[0,1].scatter(timestamp_arr, pf_track_pos_arr[:,1],color=color,alpha=0.6,label=label)
+    ax[1,1].plot(timestamp_arr, pf_along_track_errors_arr, color=color, label='GT-'+label, linewidth=3)
+    
+    if INS:
+        ax[0,0].scatter(timestamp_arr, imu_track_pos_arr[:,0],color='red',alpha=0.6,label='INS')
+        ax[1,0].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+        ax[0,1].scatter(timestamp_arr, imu_track_pos_arr[:,1],color='red',alpha=0.6,label='INS')
+        ax[1,1].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
+        
+           
+    #ax[1,0].plot(timestamp_arr, -1*np.sqrt(sigma_cross_arr) * 1.5, color='orange', linewidth=3)
+    #ax[1,0].plot(timestamp_arr, np.sqrt(sigma_cross_arr) * 1.5, color='orange', label='std Lat', linewidth=3)
+    #ax[1,1].plot(timestamp_arr, -1*np.sqrt(sigma_along_arr) * 2, color='orange', label='std Lon', linewidth=3)
+    #ax[1,1].plot(timestamp_arr, np.sqrt(sigma_along_arr) * 2, color='orange', linewidth=3)
 
-    #Cross-Track Err(t)
-    ax[1,0].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
-    ax[1,0].plot(timestamp_arr, pf_cross_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
-    ax[1,0].plot(timestamp_arr, imu_cross_track_errors_arr, color='red', label='GT-INS', linewidth=3)
-    ax[1,0].plot(timestamp_arr, -1*np.sqrt(sigma_cross_arr) * 1.5, color='orange', linewidth=3)
-    ax[1,0].plot(timestamp_arr, np.sqrt(sigma_cross_arr) * 1.5, color='orange', label='std Lat', linewidth=3)
-
-    #Along-Track Position(t)
-    ax[0,1].scatter(timestamp_arr, gt_track_pos_arr[:,1],color='green',alpha=0.6,label='GT')
-    ax[0,1].scatter(timestamp_arr, pf_track_pos_arr[:,1],color='blue',alpha=0.6,label='RadLoc')
-    ax[0,1].scatter(timestamp_arr, imu_track_pos_arr[:,1],color='red',alpha=0.6,label='INS')
-
-    #Along-Track Err(t)
-    ax[1,1].plot(timestamp_arr, np.zeros(N),color='green',alpha=0.6,label='GT', linewidth=3)
-    ax[1,1].plot(timestamp_arr, pf_along_track_errors_arr, color='blue', label='GT-RadLoc', linewidth=3)
-    ax[1,1].plot(timestamp_arr, imu_along_track_errors_arr, color='red', label='GT-INS', linewidth=3)
-    ax[1,1].plot(timestamp_arr, -1*np.sqrt(sigma_along_arr) * 2, color='orange', label='std Lon', linewidth=3)
-    ax[1,1].plot(timestamp_arr, np.sqrt(sigma_along_arr) * 2, color='orange', linewidth=3)
     
     return ax
 

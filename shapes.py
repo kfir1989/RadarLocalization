@@ -121,3 +121,21 @@ def classifyShape(polynoms):
             lines.remove(i)
             
     return (lines, circles, clothoids, corners)
+
+def extractPriorShape(polynoms):
+    lines = []
+    circles = []
+    clothoids = []
+    corners = []
+    #classify polynoms to lines, circles, clothoids
+    for ipol,polynom in enumerate(polynoms):
+        if polynom["shape"] == "Line":
+            lines.append(ipol)
+        elif polynom["shape"] == "Arc":
+            circles.append(ipol)
+        elif polynom["shape"] == "Clothoid":
+            clothoids.append(ipol)
+        elif polynom["shape"] == "Corner":
+            corners.append(ipol)
+            
+    return (lines, circles, clothoids, corners)

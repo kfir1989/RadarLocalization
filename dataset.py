@@ -169,6 +169,7 @@ class NuscenesDataset(Dataset):
         self.camera_files = sorted(os.listdir(self.cpath))
         self.radar_ts = self.__extractTimestamps("radar", self.radar_files)
         self.camera_ts = self.__extractTimestamps("camera", self.camera_files)
+        self.exp_params = kwargs.pop('exp_params', {"radius" : 0.305})
         
         my_scene = self.nusc.scene[scene_id]
         first_sample_token = my_scene['first_sample_token']
@@ -188,10 +189,10 @@ class NuscenesDataset(Dataset):
         dAz = 0.02
         z = self.__getRadarSweep(t)[:,0:2]
         cov = getXYCovMatrix(z[:,1], z[:,0], dR, dAz)
-        trns_gt,rot_gt = self.getEgoInfo(t, GT=True)
+        trns_gt,rot_gt = self.getEgoInfo(t, GT=True, radius=self.exp_params["radius"])
         veh_speed = self.odometry["speed"]
         R_gt = rot_gt.rotation_matrix[0:2,0:2] ##not great!
-        trns_imu,rot_imu = self.getEgoInfo(t, GT=False)
+        trns_imu,rot_imu = self.getEgoInfo(t, GT=False, radius=self.exp_params["radius"])
         R_imu = rot_imu.rotation_matrix[0:2,0:2] ##not great!
         if GT:
             trns,rot,R = trns_gt, rot_gt, R_gt
@@ -228,7 +229,6 @@ class NuscenesDataset(Dataset):
         f = os.path.join(self.rpath, self.radar_files[t])
         pc = RadarPointCloud.from_file(f)
         
-        return pc
 
     
     def getDynamicPoints(self, t):
@@ -329,7 +329,7 @@ class NuscenesDataset(Dataset):
             
         return df
     
-    def getEgoInfo(self, i, GT=True):
+    def getEgoInfo(self, i, GT=True, radius=0.305):
         ts = self.radar_ts.iloc[i]["timestamp"] #take timestamp from radar
         if GT:
             eidx = (self.ego['timestamp']-ts).abs().argsort()[0]
@@ -350,7 +350,7 @@ class NuscenesDataset(Dataset):
 
             #odometry (zoe vehicle info)
             wheel_speed = np.array([(m['utime'], m['FL_wheel_speed']) for m in self.veh_speed])
-            radius = 0.308#0.305  # Known Zoe wheel radius in meters.
+            #radius = 0.308#0.305  # Known Zoe wheel radius in meters.
             circumference = 2 * np.pi * radius
             wheel_speed[:, 1] *= circumference / 60
 

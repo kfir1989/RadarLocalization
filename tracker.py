@@ -7,21 +7,23 @@ import detector
 import scipy
 from sklearn.cluster import DBSCAN
 from scipy.spatial.distance import cdist
+import time
+from shapes import classifyShape
 
 #Parameters for simulation: 
     
 class StaticTracker:
     def __init__(self):
         self.ext_object_list = []
-        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=3,deltaE=3)
+        self.ext_data_associator = ExtObjectDataAssociator(deltaL=2,deltaS=2,deltaE=2)
         self.pnt_object_list = []
         self.pnt_data_associator = PointObjectDataAssociator(delta=2)
         self.eta = 40
         self.frame_idx = 0
         self.polynom_list = []
         self.k = 8
-        self.pnt_max_non_update_iterations = 8#4
-        self.ext_max_non_update_iterations = 10#5
+        self.pnt_max_non_update_iterations = 6#8
+        self.ext_max_non_update_iterations = 8#10
         self.max_decline_factor = 100
         self.system_rotated_flag = False
         
@@ -31,25 +33,25 @@ class StaticTracker:
     def run(self, z, dz, prior):
         self.frame_idx += 1
         self.debug = {"pgpol": [], "mupoi": [], "mupol": []}
-        print("Number of point tracks before run()", len(self.pnt_object_list))
-        print("Number of extended tracks before run()", len(self.ext_object_list))
+        #print("Number of point tracks before run()", len(self.pnt_object_list))
+        #print("Number of extended tracks before run()", len(self.ext_object_list))
         
         #prediction
         for ext_track in self.ext_object_list:
-            ext_track.predict()
+            ext_track.predict(self.frame_idx)
             ext_track.save()
         for pnt_track in self.pnt_object_list:
-            pnt_track.predict()
+            pnt_track.predict(self.frame_idx)
             pnt_track.save()
         
         Ge, Gp = self.p2t(z)
         z, dz = self.trackUpdate(z, dz, Ge, Gp)
         self.trackInitPnt(z,dz)
-            
         if self.frame_idx > 3:
             self.generateExtObject(prior)
-        self.trackMaintenance()     
-        
+        self.trackMaintenance() 
+        self.classifyExtObjects()
+
         return self.getPoints(), self.getPolynoms()
         
     def p2t(self, measurements):
@@ -130,20 +132,20 @@ class StaticTracker:
             new_trk = PointObjectTrack(x=x.reshape(1,-1), P=cov, create_frame_idx=self.frame_idx)
             self.pnt_object_list.append(new_trk)
             
-    def trackInitExt(self, polynom, generated_points, fxFlag=True):
+    def trackInitExt(self, polynom, generated_points, fxFlag=True, prior=None):
         #calc arc length: if too short, don't initiate new track
         integral_expression = np.array([1+polynom["f"].c[1]**2, 4*polynom["f"].c[0]*polynom["f"].c[1], 4*polynom["f"].c[0]**2])
         f = lambda x:integral_expression[0]+integral_expression[1]*x+integral_expression[2]*x**2
         curve_length, _ = scipy.integrate.quad(f, polynom["x_start"], polynom["x_end"])
         #print(f"polynom={polynom['f']} integral_expression={integral_expression} curve_length={curve_length}")
-        if curve_length < 5:
-            print(f"Extended track is too short curve_length={curve_length}")
+        if curve_length < 8:
+            #print(f"Extended track is too short curve_length={curve_length}")
             return False
         x = np.array([polynom["f"].c[2], polynom["f"].c[1], polynom["f"].c[0], polynom["x_start"], polynom["x_end"]]).T
         trk_similar_test = True
         if (not trk_similar_test or not self.isTrkSimilar(x, fxFlag)):
-            new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx,fxFlag=fxFlag)
-            print("created an extended object!", x)
+            new_trk = ExtendedObjectTrack(x=x,P=polynom["P"],create_frame_idx=self.frame_idx,fxFlag=fxFlag,prior=prior)
+            #print("created an extended object!", x)
             self.ext_object_list.append(new_trk)
             return True
         else:
@@ -196,11 +198,11 @@ class StaticTracker:
                     #print(f"covP = {covP}")
                     #covP = np.diag([1e-2, 1e-4, 1e-6, 5, 5])
                     f = np.poly1d(fit)
-                    if not fx_flag:
-                        print("Opening flipped polynom!!!")
+                    #if not fx_flag:
+                        #print("Opening flipped polynom!!!")
                     polynom = {"f":f,"x_start":min(xy[0,:]),"x_end":max(xy[0,:]),"P": covP, "fxFlag": fx_flag}
-                    #print("polynom was generated!", polynom)
-                    status = self.trackInitExt(polynom, xy.T, fxFlag=fx_flag)
+                    #print(f"polynom was generated! polynom={polynom} prior={priors[ip]}")
+                    status = self.trackInitExt(polynom, xy.T, fxFlag=fx_flag,prior=priors[ip])
                     if status:
                         if delete_indices:
                             delete_indices = delete_indices + selected_pnts[0].tolist()
@@ -232,6 +234,21 @@ class StaticTracker:
         self.deleteTrack(self.ext_object_list, ext_delete_list)
         self.deleteTrack(self.pnt_object_list, pnt_delete_list)
         
+    def classifyExtObjects(self):
+        prior_list = []
+        for trk in self.ext_object_list:
+            prior_list.append(trk.getPrior())
+        (lines, arcs, clothoids, corners) = classifyShape(prior_list)
+        
+        for line in lines:
+            self.ext_object_list[line].setShape("Line")
+        for arc in arcs:
+            self.ext_object_list[arc].setShape("Arc")
+        for clothoid in clothoids:
+            self.ext_object_list[clothoid].setShape("Clothoid")
+        for corner in corners:
+            self.ext_object_list[corner].setShape("Corner")
+            
     def translatePolynom(self, polynom, trns, rot):
         #translate polynom
         a0,a1,a2 = polynom[0],polynom[1],polynom[2]
@@ -266,9 +283,9 @@ class StaticTracker:
             if (overlap > 0.5*(x_trk[4]-x_trk[3]) or overlap > 0.5*(x_cand[4]-x_cand[3])):# and lat_distance < 5:
                 dist = self.innerProductPolynoms(c0,c1,xleft,xright)
                 if dist < 10: #10:
-                    print("Tracks are similar! do not open a new trk", c0, c1)
+                    #print("Tracks are similar! do not open a new trk", c0, c1)
                     return True
-                print("dist is", dist, " not similar!", c0, c1, xleft, xright)
+                #print("dist is", dist, " not similar!", c0, c1, xleft, xright)
         return False
      
     @staticmethod
@@ -385,7 +402,7 @@ class StaticTracker:
         if pnt_object_list:
             M = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             D = StaticTracker.findClosestPoint(M, prior)
-            clus = DBSCAN(eps=4, min_samples=2).fit(M)
+            clus = DBSCAN(eps=2, min_samples=2).fit(M)
             labels = clus.labels_ 
             P = np.eye(len(pnt_object_list))
             for i in range(M.shape[0]):
@@ -465,7 +482,7 @@ class StaticTracker:
     def createProbabilityMatrixExt(pnt_object_list, prior):
         fx_flag = prior["fx"]
         xthr = 5
-        prob_th = 0.05
+        prob_th = 0.15
         if pnt_object_list:
             n_pnts = len(pnt_object_list)
             P = np.eye(n_pnts)
@@ -474,7 +491,7 @@ class StaticTracker:
             
             M, INVCOV, det = StaticTracker.getTrkPointsMatrix(pnt_object_list,fx_flag)
             #DBSCAN
-            clus = DBSCAN(eps=4, min_samples=2).fit(M)
+            clus = DBSCAN(eps=2, min_samples=2).fit(M)
             labels = clus.labels_ 
             x = M[:,0]
             y = M[:,1]
@@ -507,8 +524,8 @@ class StaticTracker:
                     H = np.zeros([n_pnts,n_max_hypo])
                 """
                 if stage == 0:
-                    X0 = np.arange(-7,7,1)
-                    Y0 = np.arange(-7,7,1)
+                    X0 = np.arange(-10,7,1)
+                    Y0 = np.arange(-10,7,1)
                     T0 = np.array([0])
                     if c[2] > 0.1:
                         T0 = np.arange(-6,6,1)
@@ -519,9 +536,7 @@ class StaticTracker:
                     if c[2] > 0.1:
                         T0 = np.arange(T0_coarse-1,T0_coarse+1,0.2)
                     n_max_hypo = X0.shape[0] * Y0.shape[0] * T0.shape[0]
-                    H = np.zeros([n_pnts,n_max_hypo])
-                
-                    
+                    H = np.zeros([n_pnts,n_max_hypo])  
             
                 for x0 in np.nditer(X0):
                     for y0 in np.nditer(Y0):
@@ -636,7 +651,7 @@ class StaticTracker:
         polynoms = []
         for trk in self.ext_object_list:
             x = trk.getStateVector()
-            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4],"fxFlag":trk.getFxFlag(), "P": trk.getStateCovarianceMatrix()})
+            polynoms.append({"f": np.poly1d([x[2], x[1], x[0]]),"x_start":x[3],"x_end":x[4],"fxFlag":trk.getFxFlag(), "P": trk.getStateCovarianceMatrix(),"prior": trk.getPrior(), "shape": trk.getShape()})
             
         return polynoms
     

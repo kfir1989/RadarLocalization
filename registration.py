@@ -62,8 +62,9 @@ def generatePolynom(x_start, x_end, a0, a1, a2, fx=True):
 
 def transformPolynom(B, tx, ty, theta, center=(0,0)):
     #center = (tx, ty)
-    #print(center)
-    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=theta, scale=1)
+    angle = theta if theta < 0 else theta + 360
+    #print(f"angle={type(angle)}")
+    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=angle, scale=1)
     transform_matrix = rotate_matrix
     transform_matrix[0,2] += tx
     transform_matrix[1,2] += ty
@@ -75,90 +76,114 @@ def transformPolynom(B, tx, ty, theta, center=(0,0)):
     
     return Bt.T
 
+class LF:
+    def __init__(self):
+        pass
+    
+    @staticmethod
+    def FindBestGrad(A, i0, i1, i2,method="max"):
+        t0 = min(A.shape[0]-1, i0+1)
+        b0 = max(0, i0-1)
+        t1 = min(A.shape[1]-1, i1+1)
+        b1 = max(0, i1-1)
+        t2 = min(A.shape[2]-1, i2+1)
+        b2 = max(0, i2-1)
+
+        nbhood = A[b0:t0+1,b1:t1+1,b2:t2+1]
+        if method == "max":
+            max_index = np.argmax(nbhood)
+        else:
+            max_index = np.argmin(nbhood)
+        (itx, ity, itheta) = np.unravel_index(max_index, nbhood.shape)
+        itx += b0
+        ity += b1
+        itheta += b2
+
+        status = False if itx == i0 and ity == i1 and itheta == i2 else True
+        return (itx-1, ity-1, itheta-1), status
+    
+    def buildMaps(self, A, res=10,patch_size=200):
+        #1. Generate LF from A (sparse to binary + getProbabilityMap)
+        bina = scatter_to_image(A, res_factor=res, center = [0,0], patch_size=patch_size)
+        bina[bina == 1] = 255
+        self.LFa1 = build_probability_map(bina, sigma=15,outlier_th=0.02)
+        self.LFa2 = build_probability_map(bina, sigma=3,outlier_th=0.02)
+        
+    def calcScoreMatrix(self,A,B, \
+                        X0, Y0, TH0,
+                        parts=None,res=10,patch_size=200,
+                        method="_basic"):
+        score = np.zeros([X0.shape[0], Y0.shape[0], TH0.shape[0]])
+        for ix0, x0 in enumerate(np.nditer(X0)):
+            for iy0, y0 in enumerate(np.nditer(Y0)):
+                for ith0, th0 in enumerate(np.nditer(TH0)):
+                    #print(x0, y0, th0)
+                    Bt = transformPolynom(B[:, 0:2], np.asscalar(x0), np.asscalar(y0), np.asscalar(th0))
+                    high_sigma_score = calcScore(self.LFa1, Bt, patch_size, res)
+
+                    low_sigma_score = 0
+                    for ipart in range(1, len(parts)):
+                        polynom = Bt[parts[ipart-1]:parts[ipart],:]
+                        #Find median point on the polynom
+                        polynom_mid_point = polynom[int(polynom.shape[0]/2),:]
+                        #Find nearest neighbor point on the map
+                        eucld_dist = np.linalg.norm(A[:, 0:2]-polynom_mid_point,axis=1)
+                        it = eucld_dist.argmin()
+                        #Calc translation
+                        txy = A[it,:2] - polynom_mid_point
+                        #print(f"txy = {txy}")
+                        if method == "_improved" and (np.linalg.norm(txy)) < 5:
+                            #Translate polynom
+                            polynom_translated = polynom + txy
+                            #Compute low sigma score for translated polynom(shape)
+                            low_sigma_score += calcScore(self.LFa2, polynom_translated, patch_size, res)
+                        elif method == "_improved":
+                            #Compute low sigma score for non-translated polynom(shape)
+                            low_sigma_score += calcScore(self.LFa2, polynom, patch_size, res)
+
+                    score[int(ix0), int(iy0), int(ith0)] = high_sigma_score + low_sigma_score
+                    
+        return score
+
+    def run(self,A, B, parts=None,
+            max_x_uncertainry=5,max_y_uncertainry=5,max_theta_uncertainry=8,
+            method="_basic"):
+        
+        t_res = 0.1 #[m]
+        angle_res = 0.2 #[deg]
+        tx = 0
+        ty = 0
+        theta = 0   
+        num_iterations = 0
+        best_score = 1e6
+        stop_th = 1e-3
+        while True:
+            num_iterations += 1
+            X0 = np.arange(tx-t_res, tx+t_res+1e-6,t_res)
+            Y0 = np.arange(ty-t_res, ty+t_res+1e-6,t_res)
+            TH0 = np.arange(theta-angle_res,theta+angle_res+1e-6,angle_res)
+            #print(f" it = {num_iterations} X0 = {X0} Y0 = {Y0} TH0 = {TH0} theta={theta}")
+            cur_score = self.calcScoreMatrix(A, B, X0, Y0, TH0, parts=parts,method=method)
+            (itx, ity, itheta), status = self.FindBestGrad(cur_score, 1, 1, 1, method="min")
+            best_it_score = cur_score[itx+1,ity+1,itheta+1]
+            tx += t_res * itx
+            ty += t_res * ity
+            theta += angle_res * itheta
+            if not status:
+                break
+            if best_it_score < best_score - stop_th:
+                best_score = best_it_score
+            else:
+                break
+
+        return (tx, ty, theta), self.LFa2, cur_score
+
 def calcScore(LF, Bt, patch_size, res):
     Bt_int = np.round((Bt + patch_size/2)*res)
     Bt_int = Bt_int.astype(int)
-    return np.sum(LF[Bt_int[:,1], Bt_int[:,0]])
+    Bt_int = np.unique(Bt_int, axis=0)
+    return np.sum(1./LF[Bt_int[:,1], Bt_int[:,0]]) / Bt.shape[0]
 
-def FindBestGrad(A, i0, i1, i2):
-    t0 = min(A.shape[0]-1, i0+1)
-    b0 = max(0, i0-1)
-    t1 = min(A.shape[1]-1, i1+1)
-    b1 = max(0, i1-1)
-    t2 = min(A.shape[2]-1, i2+1)
-    b2 = max(0, i2-1)
-    
-    nbhood = A[b0:t0+1,b1:t1+1,b2:t2+1]
-    max_index = np.argmax(nbhood)
-    (itx, ity, itheta) = np.unravel_index(max_index, nbhood.shape)
-    itx += b0
-    ity += b1
-    itheta += b2
-    
-    status = False if itx == i0 and ity == i1 and itheta == i2 else True
-    return (itx, ity, itheta), status
-
-def runLF(A,B,trns_init,parts=None,max_trns=2,max_rot=5,res=10,patch_size=200,
-          max_x_uncertainry=5,max_y_uncertainry=5,max_theta_uncertainry=8,):
-    #1. Generate LF from A (sparse to binary + getProbabilityMap)
-    bina = scatter_to_image(A, res_factor=res, center = [0,0], patch_size=patch_size)
-    bina[bina == 1] = 255
-    LFa1 = build_probability_map(bina, sigma=res*0.9)
-    LFa2 = build_probability_map(bina, sigma=res/2)
-    
-    X0 = np.arange(-max_x_uncertainry,max_x_uncertainry,0.1)
-    Y0 = np.arange(-max_y_uncertainry,max_y_uncertainry,0.1)
-    TH0 = np.arange(-max_theta_uncertainry,max_theta_uncertainry,0.5)
-    score = np.zeros([X0.shape[0], Y0.shape[0], TH0.shape[0]])
-    for ix0, x0 in enumerate(np.nditer(X0)):
-        for iy0, y0 in enumerate(np.nditer(Y0)):
-            for ith0, th0 in enumerate(np.nditer(TH0)):
-                #print(x0, y0, th0)
-                Bt = transformPolynom(B[:, 0:2], np.asscalar(x0), np.asscalar(y0), np.asscalar(th0))
-                high_sigma_score = calcScore(LFa1, Bt, patch_size, res)
-                
-                low_sigma_score = 0
-                for ipart in range(1, len(parts)):
-                    polynom = Bt[parts[ipart-1]:parts[ipart],:]
-                    #Find median point on the polynom
-                    polynom_mid_point = polynom[int(polynom.shape[0]/2),:]
-                    #Find nearest neighbor point on the map
-                    eucld_dist = np.linalg.norm(A[:, 0:2]-polynom_mid_point,axis=1)
-                    it = eucld_dist.argmin()
-                    #Calc translation
-                    txy = A[it,:2] - polynom_mid_point
-                    #print(f"txy = {txy}")
-                    if(np.linalg.norm(txy)) < 4:
-                        #Translate polynom
-                        polynom_translated = polynom + txy
-                        #Compute low sigma score for translated polynom(shape)
-                        low_sigma_score += calcScore(LFa2, polynom_translated, patch_size, res)
-                        if (ix0==18 and iy0 == 10 and ith0 == 27) or (ix0==13 and iy0 == 13 and ith0 == 6):
-                            print(f"ith0 = {ith0} ipart = {ipart} low_sigma_score = {low_sigma_score} high_sigma_score = {high_sigma_score}")
-                    else:
-                        #Compute low sigma score for non-translated polynom(shape)
-                        low_sigma_score += calcScore(LFa2, polynom, patch_size, res)
-                    
-                
-                score[int(ix0), int(iy0), int(ith0)] = 0.99 * high_sigma_score + 0.01 * low_sigma_score
-                
-    
-    global_max_flag = False
-    if global_max_flag:
-        max_index = np.argmax(score)
-        (itx, ity, itheta) = np.unravel_index(max_index, score.shape)
-    else:
-        itx = int(score.shape[0]/2)
-        ity = int(score.shape[1]/2)
-        itheta = int(score.shape[2]/2)
-        while True:
-            cur_score = score[itx, ity, itheta]
-            (itx, ity, itheta), status = FindBestGrad(score, itx, ity, itheta)
-            if not status:
-                break
-    
-    print("best is ",(itx, ity, itheta))
-    return (X0[itx], Y0[ity], TH0[itheta]), LFa2, score
 
 epsLine = 1.
 epsCircle = 1

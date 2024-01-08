@@ -540,7 +540,7 @@ class NuscenesVideoDebug:
         video.release()
         
 class PFVideo:
-    def __init__(self, scene=5, history=False, N=410):
+    def __init__(self, scene=5, history=False, N=410, method=""):
         self.fig, self.ax = plt.subplots(2,3,figsize=(30,14))
         self.fig2, self.ax2 = plt.subplots(1,2,figsize=(30,14))
         self.fig3, self.ax3 = plt.subplots(1,3,figsize=(30,14))
@@ -557,7 +557,7 @@ class PFVideo:
         
         self.colors = ['blue','orange','green','red','black','pink','yellow','purple',"brown","firebrick","coral","lime",
                       "wheat", "yellowgreen", "lightyellow", "skyblue", "cyan", "chocolate", "maroon", "peru", "blueviolet"]
-        self.dir_name = f"images/{scene}/pf_images"
+        self.dir_name = f"images/{scene}/pf_images{method}"
         os.system("mkdir -p " + self.dir_name)
         self.history = history
         self.counter = 0

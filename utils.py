@@ -51,19 +51,22 @@ class ExtObjectDataAssociator():
         P_inv = 1 / S_pred
         return (x[3]-self.deltaS) < u and (x[4]+self.deltaE) > u and (quad_dist * P_inv <= self.deltaL)
     
-    def gating_not_good(self, u, y, y_pred, S_pred, x):
+    def getY(self, x, p):
+        return x[0]+x[1]*p+x[2]*p**2
+    
+    def gating_dist(self, u, y, y_pred, S_pred, x):
         quad_dist = (y-y_pred)**2
         P_inv = 1 / S_pred
         
         dist = 0
         if u < x[3]:
-            dist = math.sqrt((x[3]-u)**2+(x[0]+x[1]*x[3]+x[2]*x[3]**2-y)**2)
+            dist = math.sqrt((x[3]-u)**2+(self.getY(x, x[3])-y)**2)
         elif u > x[4]:
-            dist = math.sqrt((x[4]-u)**2+(x[0]+x[1]*x[4]+x[2]*x[4]**2-y)**2)
-        return dist < 3 and (quad_dist * P_inv <= self.deltaL)
+            dist = math.sqrt((x[4]-u)**2+(self.getY(x, x[4])-y)**2)
+        return dist < self.deltaS and (quad_dist * P_inv <= self.deltaL)
         
     def calcLikelihood(self, u, y, y_pred, S_pred, x):
-        if self.gating(u, y, y_pred, S_pred, x):
+        if self.gating_dist(u, y, y_pred, S_pred, x):
             det = S_pred
             l = np.power((2*np.pi), -0.5*self.dim) * np.power(det, -0.5) * np.exp(-0.5 * (1/det)*(y-y_pred)**2) 
         else:
@@ -103,11 +106,13 @@ class PointObjectTrack:
         self.saver = Saver(self.kf)
         self.create_frame_idx = create_frame_idx
         self.last_update_frame_idx = create_frame_idx
+        self.last_frame_idx = create_frame_idx
         self.hits = [1]
     
-    def predict(self):
+    def predict(self, current_frame_idx):
         self.kf.predict()
         self.saver.save()
+        self.last_frame_idx = current_frame_idx
         
     def update(self, z, cov, current_frame_idx):
         self.kf.update(z,R=cov)
@@ -232,7 +237,7 @@ class ExtendedObjectTrack_UKF:
         return self.fx_flag
     
 class ExtendedObjectTrack:
-    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995, fxFlag=True):
+    def __init__(self, x=None, P=None, create_frame_idx=0, gamma=0.995, fxFlag=True, prior=None):
         self.kf = KalmanFilter(dim_x=5, dim_z=2)
         x0 = np.array([[5, 0, 0, 0, 0]]).T # a1, a2, a3, x_start, x_end
         P0 = np.diag([2, 1, 1, 20, 20]) #Initial state covariance matrix
@@ -251,13 +256,16 @@ class ExtendedObjectTrack:
         self.saver = Saver(self.kf)
         self.create_frame_idx = create_frame_idx
         self.last_update_frame_idx = create_frame_idx
+        self.last_frame_idx = create_frame_idx
         self.hits = [1]
         self.static_cars_flag = False
         self.counter_update = 0
         self.fx_flag = fxFlag
+        self.prior = prior
         
-    def predict(self):
+    def predict(self, current_frame_idx):
         self.kf.predict()
+        self.last_frame_idx = current_frame_idx
         
     def update(self, z, current_frame_idx, H=None, cov=None):
         if H is not None:
@@ -295,6 +303,9 @@ class ExtendedObjectTrack:
     def getLastUpdateFrameIdx(self):
         return self.last_update_frame_idx
     
+    def isUpdated(self):
+        return abs(self.last_update_frame_idx - self.last_frame_idx) < 3
+    
     def getElements(self):
         state = self.getStateVector()
         x_elements = np.linspace(state[3], state[4], int(np.ceil(np.abs(state[4]-state[3]))*5))
@@ -312,3 +323,15 @@ class ExtendedObjectTrack:
     
     def getFxFlag(self):
         return self.fx_flag
+    
+    def setPrior(self, prior):
+        self.prior = prior
+    
+    def getPrior(self):
+        return self.prior
+    
+    def setShape(self, shape):
+        self.shape = shape
+    
+    def getShape(self):
+        return self.shape

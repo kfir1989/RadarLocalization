@@ -140,7 +140,6 @@ def calcTrackPosition(ego_path, ego_trns, gt_pos, pf_pos, imu_pos):
 
 def calc_rmse(ego_path, ego_trns, gt_pos, pf_mean_pos, imu_pos):
     gt_track_pos, pf_track_pos, imu_track_pos = calcTrackPosition(ego_path, ego_trns, gt_pos[0:2], pf_mean_pos, imu_pos)
-    print("gt_track_pos[1]", gt_track_pos[1])
     pf_track_errors = pf_track_pos - gt_track_pos
     imu_track_errors = imu_track_pos - gt_track_pos
 
@@ -153,13 +152,20 @@ def calc_acc_rmse(ego_path, ego_trns, pf_mean_pos, imu_pos, N):
     imu_rmse_longitudal = np.zeros(N)
     for i in tqdm(range(0,N)):
         pf_track_errors, imu_track_errors = calc_rmse(ego_path, ego_trns, ego_path[i,:], pf_mean_pos[i,:], imu_pos[i,:])
-        print("pf_track_errors",pf_track_errors,"imu_track_errors",imu_track_errors)
         pf_rmse_lateral[i] = pf_track_errors[0]
         pf_rmse_longitudal[i] = pf_track_errors[1]
         imu_rmse_lateral[i] = imu_track_errors[0]
         imu_rmse_longitudal[i] = imu_track_errors[1]
-
-    print(f"PF RMSE lateral: {math.sqrt((1. / N) * np.sum(pf_rmse_lateral**2))}")
-    print(f"PF RMSE longitudal: {math.sqrt((1. / N) * np.sum(pf_rmse_longitudal**2))}")
-    print(f"IMU RMSE lateral: {math.sqrt((1. / N) * np.sum(imu_rmse_lateral**2))}")
-    print(f"IMU RMSE longitudal: {math.sqrt((1. / N) * np.sum(imu_rmse_longitudal**2))}")
+    
+    pf_rmse_lat = math.sqrt((1. / N) * np.sum(pf_rmse_lateral**2))
+    pf_rmse_lon = math.sqrt((1. / N) * np.sum(pf_rmse_longitudal**2))
+    imu_rmse_lat = math.sqrt((1. / N) * np.sum(imu_rmse_lateral**2))
+    imu_rmse_lon = math.sqrt((1. / N) * np.sum(imu_rmse_longitudal**2))
+    
+    pf_max_lat = np.max(np.abs(pf_rmse_lateral))
+    pf_max_lon = np.max(np.abs(pf_rmse_longitudal))
+    imu_max_lat = np.max(np.abs(imu_rmse_lateral))
+    imu_max_lon = np.max(np.abs(imu_rmse_longitudal))
+    
+    
+    return (pf_rmse_lat, pf_rmse_lon, imu_rmse_lat, imu_rmse_lon, pf_max_lat, pf_max_lon, imu_max_lat, imu_max_lon)

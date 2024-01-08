@@ -6,6 +6,7 @@ import scipy.ndimage.morphology
 import nuscenes.map_expansion.arcline_path_utils as path_utils
 from scipy.ndimage.filters import gaussian_filter
 from scipy.ndimage.filters import convolve
+from scipy.ndimage.morphology import distance_transform_edt
 
 def draw_line(mat, x0, y0, x1, y1, fill=255, inplace=False):
     if not (0 <= x0 < mat.shape[0] and 0 <= x1 < mat.shape[0] and
@@ -87,8 +88,6 @@ def getCombinedMap_old(nuscMap, worldRef, patchSize=200, smooth=True):
     
     return edges
 
-
-
 def getCombinedMap(nuscMap, worldRef, patchSize=200, smooth=True, res_factor=1):
     image1 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['drivable_area'],res_factor=res_factor)
     image2 = getLayer(nuscMap, worldRef, patchSize=patchSize, layer_names=['walkway'],res_factor=res_factor)
@@ -130,7 +129,7 @@ def scatter_to_image(scatter, res_factor=5, center = [600,600], patch_size=200):
 
     return image
 
-def build_probability_map(binary_map, sigma=1, N=1., kernel=None):
+def build_probability_map_old(binary_map, sigma=1, N=1., kernel=None):
     # Create an empty probability map with the same size as the binary map
     probability_map = np.zeros_like(binary_map, dtype=float)
     
@@ -156,6 +155,32 @@ def build_probability_map(binary_map, sigma=1, N=1., kernel=None):
     probability_map[binary_map > 0] = 1.0
     
     c1,c2 = 0.99,0.01
+    probability_map = c1 * probability_map + c2# add uniform distribution
+    
+    return probability_map
+
+def gaussian_distance(x, sigma):
+    return np.exp(-(x ** 2) / (2 * sigma ** 2))
+
+def apply_gaussian_distance(original_map, sigma):
+    # Calculate the distance transform of the binary map
+    distance_map = distance_transform_edt(np.logical_not(original_map))
+
+    # Apply Gaussian function to the normalized distance values
+    gaussian_map = gaussian_distance(distance_map, sigma)
+
+    return gaussian_map
+
+def build_probability_map(binary_map, sigma=1,outlier_th=0.1):
+    # Create an empty probability map with the same size as the binary map
+    probability_map = np.zeros_like(binary_map, dtype=float)
+    
+    # Set the highest probability (1) for pixels with a value of 1 in the binary map
+    probability_map[np.logical_or(binary_map == 255, binary_map == 1)] = 1.
+    
+    probability_map = apply_gaussian_distance(probability_map, sigma)
+    
+    c1,c2 = (1-outlier_th),outlier_th
     probability_map = c1 * probability_map + c2# add uniform distribution
     
     return probability_map
